@@ -14,6 +14,8 @@ import { env, InferenceSession, Tensor } from "onnxruntime-web";
 env.wasm.wasmPaths = "/ort/";
 
 const MODEL_SIZE = 640;
+const PHONE_CLASS_INDEX = 67;
+const PHONE_DEBUG_MIN_SCORE = 0.05;
 
 /** COCO labels we care about */
 const FLAGGED_LABELS = new Set([
@@ -39,6 +41,7 @@ let session: InferenceSession | null = null;
 
 async function loadModel() {
   const backends: ("webgpu" | "wasm")[] = ["webgpu", "wasm"];
+  const errors: string[] = [];
   for (const backend of backends) {
     try {
       session = await InferenceSession.create("/models/yolov8n.onnx", {
@@ -46,15 +49,15 @@ async function loadModel() {
       });
       console.log(`[yolo.worker] loaded on ${backend}`);
       return;
-    } catch {
-      // try next
+    } catch (error) {
+      errors.push(`${backend}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  console.warn("[yolo.worker] Could not load model — object detection disabled.");
+  throw new Error(`Could not load object detection model (${errors.join("; ")})`);
 }
 
 /** Letterbox-resize ImageData → Float32Array [1, 3, 640, 640] in RGB order */
-function preprocess(imageData: ImageData, srcW: number, srcH: number): [Float32Array, number, number, number] {
+function preprocess(imageData: ImageData, srcW: number, srcH: number): [Float32Array, number, number] {
   const scale = Math.min(MODEL_SIZE / srcW, MODEL_SIZE / srcH);
   const newW = Math.round(srcW * scale);
   const newH = Math.round(srcH * scale);
@@ -81,7 +84,7 @@ function preprocess(imageData: ImageData, srcW: number, srcH: number): [Float32A
     tensor[i + n]     = pixels[i * 4 + 1] / 255; // G
     tensor[i + n * 2] = pixels[i * 4 + 2] / 255; // B
   }
-  return [tensor, scale, padX, padY];
+  return [tensor, padX, padY];
 }
 
 /** NMS — keeps the best box per class cluster */
@@ -118,10 +121,13 @@ async function detect(
   srcW: number,
   srcH: number,
   scoreThresh: number,
+  phoneScoreThresh: number,
   iouThresh: number,
-): Promise<DetectionBox[]> {
-  if (!session) return [];
-  const [tensorData, scale, padX, padY] = preprocess(imageData, srcW, srcH);
+): Promise<{ boxes: DetectionBox[]; phoneCandidates: DetectionBox[]; maxPhoneScore: number }> {
+  if (!session) {
+    throw new Error("Object detection model is not initialized");
+  }
+  const [tensorData, padX, padY] = preprocess(imageData, srcW, srcH);
   const input = new Tensor("float32", tensorData, [1, 3, MODEL_SIZE, MODEL_SIZE]);
   const inputName = session.inputNames[0];
   const { output0 } = await session.run({ [inputName]: input }) as { output0: Tensor };
@@ -130,11 +136,37 @@ async function detect(
   const data = output0.data as Float32Array;
   const [, rows, cols] = output0.dims; // [1, 84, 8400]
   const results: DetectionBox[] = [];
+  const phoneCandidates: DetectionBox[] = [];
+  let maxPhoneScore = 0;
+
+  function decodeBox(ci: number, score: number): DetectionBox {
+    const cx = data[ci];
+    const cy = data[cols + ci];
+    const bw = data[2 * cols + ci];
+    const bh = data[3 * cols + ci];
+
+    return {
+      label: "cell phone",
+      score,
+      x: ((cx - bw / 2) - padX) / (MODEL_SIZE - 2 * padX),
+      y: ((cy - bh / 2) - padY) / (MODEL_SIZE - 2 * padY),
+      width: bw / (MODEL_SIZE - 2 * padX),
+      height: bh / (MODEL_SIZE - 2 * padY),
+    };
+  }
 
   // YOLOv8n standard export: shape [1, 84, 8400]
   // Each col: [cx, cy, w, h, cls0…cls79]
   for (let ci = 0; ci < cols; ci++) {
-    let maxConf = scoreThresh;
+    const phoneScore = rows > 4 + PHONE_CLASS_INDEX
+      ? data[(4 + PHONE_CLASS_INDEX) * cols + ci]
+      : 0;
+    maxPhoneScore = Math.max(maxPhoneScore, phoneScore);
+    if (phoneScore >= PHONE_DEBUG_MIN_SCORE) {
+      phoneCandidates.push(decodeBox(ci, phoneScore));
+    }
+
+    let maxConf = 0;
     let clsIdx = -1;
     for (let r = 4; r < rows; r++) {
       const conf = data[r * cols + ci];
@@ -143,47 +175,74 @@ async function detect(
     if (clsIdx < 0) continue;
     const label = COCO_LABELS[clsIdx] ?? `cls${clsIdx}`;
     if (!FLAGGED_LABELS.has(label)) continue;
+    const minScore = label === "cell phone" ? phoneScoreThresh : scoreThresh;
+    if (maxConf < minScore) continue;
 
-    const cx = data[0 * cols + ci];
-    const cy = data[1 * cols + ci];
-    const bw = data[2 * cols + ci];
-    const bh = data[3 * cols + ci];
-
-    // Undo letterbox — convert from 640-space to normalized [0,1]
-    const x = ((cx - bw / 2) - padX) / (MODEL_SIZE - 2 * padX);
-    const y = ((cy - bh / 2) - padY) / (MODEL_SIZE - 2 * padY);
-    const w = bw / (MODEL_SIZE - 2 * padX);
-    const h = bh / (MODEL_SIZE - 2 * padY);
-
-    results.push({ label, score: maxConf, x, y, width: w, height: h });
+    results.push(label === "cell phone"
+      ? decodeBox(ci, maxConf)
+      : {
+          ...decodeBox(ci, maxConf),
+          label,
+        });
   }
 
-  return nms(results, iouThresh);
+  return {
+    boxes: nms(results, iouThresh),
+    phoneCandidates: nms(phoneCandidates, iouThresh).slice(0, 5),
+    maxPhoneScore,
+  };
 }
 
 // ── Message handler ──────────────────────────────────────────────────────────
 self.onmessage = async (e: MessageEvent) => {
-  const { type, imageData, width, height, scoreThresh = 0.45, iouThresh = 0.45 } = e.data as {
+  const {
+    type,
+    imageData,
+    width,
+    height,
+    scoreThresh = 0.45,
+    phoneScoreThresh = scoreThresh,
+    iouThresh = 0.45,
+  } = e.data as {
     type: string;
     imageData: ImageData;
     width: number;
     height: number;
     scoreThresh?: number;
+    phoneScoreThresh?: number;
     iouThresh?: number;
   };
 
   if (type === "init") {
-    await loadModel();
-    self.postMessage({ type: "ready" });
+    self.postMessage({ type: "loading" });
+    try {
+      await loadModel();
+      self.postMessage({ type: "ready" });
+    } catch (error) {
+      self.postMessage({
+        type: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
     return;
   }
 
   if (type === "detect") {
     try {
-      const boxes = await detect(imageData, width, height, scoreThresh, iouThresh);
-      self.postMessage({ type: "result", boxes });
-    } catch {
-      self.postMessage({ type: "result", boxes: [] });
+      const { boxes, phoneCandidates, maxPhoneScore } = await detect(
+        imageData,
+        width,
+        height,
+        scoreThresh,
+        phoneScoreThresh,
+        iouThresh,
+      );
+      self.postMessage({ type: "result", boxes, phoneCandidates, maxPhoneScore });
+    } catch (error) {
+      self.postMessage({
+        type: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 };

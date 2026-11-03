@@ -1,13 +1,17 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import type { RefObject } from "react";
 import type { DetectionBox } from "@/lib/types";
 import type { FaceStatus } from "@/hooks/useFaceMonitor";
+import type { ObjectDetectStatus } from "@/hooks/useObjectDetect";
 
 interface Props {
+  videoRef: RefObject<HTMLVideoElement | null>;
   stream: MediaStream | null;
   faceCount: number;
   faceStatus: FaceStatus;
+  objectStatus: ObjectDetectStatus;
   soundLevel: number;       // 0–1 RMS
   boxes: DetectionBox[];    // YOLO bounding boxes
   mirrored?: boolean;
@@ -20,8 +24,7 @@ const STATUS_LABEL: Record<FaceStatus, string> = {
   error: "Model error",
 };
 
-export function CameraView({ stream, faceCount, faceStatus, soundLevel, boxes, mirrored = true }: Props) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+export function CameraView({ videoRef, stream, faceCount, faceStatus, objectStatus, soundLevel, boxes, mirrored = true }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   /* Attach stream to video */
@@ -34,7 +37,7 @@ export function CameraView({ stream, faceCount, faceStatus, soundLevel, boxes, m
     } else {
       v.srcObject = null;
     }
-  }, [stream]);
+  }, [stream, videoRef]);
 
   /* Draw bounding boxes on canvas */
   useEffect(() => {
@@ -70,7 +73,7 @@ export function CameraView({ stream, faceCount, faceStatus, soundLevel, boxes, m
       ctx.font = "bold 12px monospace";
       ctx.fillText(label, x + 5, y - 7);
     }
-  }, [boxes]);
+  }, [boxes, videoRef]);
 
   const faceOk = faceStatus === "ready" && faceCount === 1;
   const faceWarn = faceStatus === "ready" && faceCount !== 1;
@@ -117,6 +120,12 @@ export function CameraView({ stream, faceCount, faceStatus, soundLevel, boxes, m
           </span>
         </div>
       </div>
+
+      <p aria-live="polite" style={{ margin: 0, fontSize: "11px", color: objectStatus === "unavailable" ? "var(--terminate)" : "var(--text-muted)" }}>
+        {objectStatus === "loading" && "Loading object detection…"}
+        {objectStatus === "ready" && "Object detection active"}
+        {objectStatus === "unavailable" && "Object detection unavailable"}
+      </p>
 
       {/* Sound level meter */}
       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>

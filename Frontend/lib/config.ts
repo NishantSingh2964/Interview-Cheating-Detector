@@ -22,6 +22,7 @@ export const DETECT = {
   cooldownMs: 10000,
   soundRms: 0.09,
   objectScore: 0.45,
+  phoneScore: 0.25,
   objectIou: 0.45,
   faceIntervalMs: 200,
   objectIntervalMs: 800,

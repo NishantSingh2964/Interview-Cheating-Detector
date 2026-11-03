@@ -61,6 +61,11 @@ export function InterviewClient({ sessionId }: Props) {
         ...partial,
       };
       const sent = reportRef.current?.(report) ?? false;
+      console.info("[proctor] violation recorded", {
+        type: report.type,
+        reason: report.reason,
+        delivery: sent ? "submitted to server" : "local only (server disconnected)",
+      });
       setLocalViolations((prev) => [
         ...prev,
         {
@@ -94,6 +99,7 @@ export function InterviewClient({ sessionId }: Props) {
     sessionId,
     enabled: active,
     onDecision: handleDecision,
+    onRejected: (reason) => console.warn("[proctor] server rejected violation:", reason),
   });
 
   useEffect(() => { reportRef.current = reportViolation; }, [reportViolation]);
@@ -115,7 +121,7 @@ export function InterviewClient({ sessionId }: Props) {
   const { status: faceStatus, faceCount } = useFaceMonitor(videoRef, active, emit);
   useWindowMonitor(active, emit);
   const { level: soundLevel } = useSoundMonitor(stream, active, emit);
-  const { boxes } = useObjectDetect(videoRef, active, emit);
+  const { status: objectStatus, boxes } = useObjectDetect(videoRef, active, emit);
 
   // ── Keyboard nav ─────────────────────────────────────────────
   useEffect(() => {
@@ -132,7 +138,10 @@ export function InterviewClient({ sessionId }: Props) {
   const requestCamera = useCallback(async () => {
     setCameraError(null);
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: true,
+      });
       setStream(s);
       setStage("active");
     } catch (err) {
@@ -157,8 +166,9 @@ export function InterviewClient({ sessionId }: Props) {
           </h2>
           <p style={{ color: "var(--text-secondary)", fontSize: "14px", lineHeight: 1.65, margin: "0 0 28px" }}>
             This interview uses AI-assisted proctoring. Your camera and microphone must
-            be enabled throughout the session. No video is recorded — only behavioral
-            signals are logged.
+            be enabled throughout the session. The camera checks for visible faces and
+            objects such as phones in real time. No video is recorded; detection signals
+            are logged.
           </p>
           {cameraError && (
             <div style={{ padding: "12px 14px", borderRadius: "var(--radius-sm)", background: "var(--terminate-bg)", border: "1px solid rgba(239,68,68,0.25)", color: "var(--terminate)", fontSize: "13px", marginBottom: "20px", textAlign: "left" }}>
@@ -239,9 +249,11 @@ export function InterviewClient({ sessionId }: Props) {
         {/* Left — camera */}
         <div>
           <CameraView
+            videoRef={videoRef}
             stream={stream}
             faceCount={faceCount}
             faceStatus={faceStatus}
+            objectStatus={objectStatus}
             soundLevel={soundLevel}
             boxes={boxes}
           />
