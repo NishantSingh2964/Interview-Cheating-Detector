@@ -16,13 +16,25 @@ function registerProctorSocket(io) {
     // ── Candidate joins ─────────────────────────────────────
     socket.on("join", async ({ sessionId }) => {
       if (!sessionId) return;
-      socket.join(`session:${sessionId}`);
-      socket.data.sessionId = sessionId;
-      socket.data.role = "candidate";
-      console.log(`[socket] candidate ${socket.id} joined session ${sessionId}`);
+      try {
+        const session = await Session.findById(sessionId).select("status");
+        if (!session || session.status !== "active") {
+          socket.emit("session_closed", {
+            status: session?.status === "terminated" ? "terminated" : "ended",
+          });
+          return;
+        }
 
-      // Start heartbeat timer
-      resetHeartbeatTimer(io, sessionId);
+        socket.join(`session:${sessionId}`);
+        socket.data.sessionId = sessionId;
+        socket.data.role = "candidate";
+        console.log(`[socket] candidate ${socket.id} joined session ${sessionId}`);
+
+        resetHeartbeatTimer(io, sessionId);
+      } catch (err) {
+        console.error("[socket] candidate join error:", err);
+        socket.emit("session_unavailable", { message: "Could not verify session status." });
+      }
     });
 
     // ── Admin joins ──────────────────────────────────────────
@@ -61,8 +73,11 @@ function registerProctorSocket(io) {
     socket.on("heartbeat", async ({ sessionId }) => {
       if (!sessionId) return;
       try {
-        await Session.findByIdAndUpdate(sessionId, { lastHeartbeat: new Date() });
-        resetHeartbeatTimer(io, sessionId);
+        const session = await Session.findOneAndUpdate(
+          { _id: sessionId, status: "active" },
+          { lastHeartbeat: new Date() },
+        );
+        if (session) resetHeartbeatTimer(io, sessionId);
       } catch (err) {
         console.error("[socket] heartbeat update error:", err);
       }
@@ -72,7 +87,10 @@ function registerProctorSocket(io) {
     socket.on("question_changed", async ({ sessionId, question }) => {
       if (!sessionId) return;
       try {
-        await Session.findByIdAndUpdate(sessionId, { currentQuestion: question });
+        await Session.findOneAndUpdate(
+          { _id: sessionId, status: "active" },
+          { currentQuestion: question },
+        );
       } catch (err) {
         console.error("[socket] question_changed error:", err);
       }

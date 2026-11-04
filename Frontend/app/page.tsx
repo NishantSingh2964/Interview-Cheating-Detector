@@ -24,6 +24,7 @@ export default function StartPage() {
         setError(
           err instanceof Error ? err.message : "Could not connect to the server."
         );
+      } finally {
         setLoading(false);
       }
     },

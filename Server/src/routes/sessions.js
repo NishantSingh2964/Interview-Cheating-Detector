@@ -59,4 +59,26 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+/**
+ * POST /api/sessions/:id/end
+ * Mark an active interview as ended. Repeated requests are safe.
+ */
+router.post("/:id/end", async (req, res) => {
+  try {
+    const session = await Session.findById(req.params.id);
+    if (!session) return res.status(404).json({ message: "Session not found" });
+
+    if (session.status === "active") {
+      session.status = "ended";
+      session.endedAt = new Date();
+      await session.save();
+    }
+
+    res.json({ session: session.toObject() });
+  } catch (err) {
+    console.error("[sessions] POST /:id/end", err);
+    res.status(500).json({ message: "Failed to end session" });
+  }
+});
+
 module.exports = router;

@@ -7,12 +7,14 @@ interface Props {
   currentIndex: number;
   onNext: () => void;
   onPrev: () => void;
+  onSubmit: () => void;
   disabled?: boolean;
 }
 
-export function QuestionPanel({ questions, currentIndex, onNext, onPrev, disabled }: Props) {
+export function QuestionPanel({ questions, currentIndex, onNext, onPrev, onSubmit, disabled }: Props) {
   const question = questions[currentIndex];
   const total = questions.length;
+  const isLastQuestion = currentIndex === total - 1;
   const progress = total > 1 ? (currentIndex / (total - 1)) * 100 : 100;
 
   if (!question) return null;
@@ -82,14 +84,16 @@ export function QuestionPanel({ questions, currentIndex, onNext, onPrev, disable
         <button
           id="next-question-btn"
           className="btn btn-primary"
-          onClick={onNext}
-          disabled={currentIndex === total - 1 || disabled}
-          aria-label="Next question"
+          onClick={isLastQuestion ? onSubmit : onNext}
+          disabled={disabled}
+          aria-label={isLastQuestion ? "Submit interview" : "Next question"}
         >
-          Next
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
+          {isLastQuestion ? "Submit interview" : "Next"}
+          {!isLastQuestion && (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          )}
         </button>
       </div>
     </div>

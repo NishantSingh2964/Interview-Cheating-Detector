@@ -20,6 +20,7 @@ type Options = {
   onDecision?: (decision: Decision) => void;
   onViolationAdded?: (violation: Violation) => void;
   onRejected?: (reason: string) => void;
+  onSessionClosed?: (status: "terminated" | "ended") => void;
 };
 
 export function useProctorSocket({
@@ -29,9 +30,12 @@ export function useProctorSocket({
   onDecision,
   onViolationAdded,
   onRejected,
+  onSessionClosed,
 }: Options) {
-  const handlers = useRef({ onDecision, onViolationAdded, onRejected, role, sessionId });
-  handlers.current = { onDecision, onViolationAdded, onRejected, role, sessionId };
+  const handlers = useRef({ onDecision, onViolationAdded, onRejected, onSessionClosed, role, sessionId });
+  useEffect(() => {
+    handlers.current = { onDecision, onViolationAdded, onRejected, onSessionClosed, role, sessionId };
+  }, [onDecision, onViolationAdded, onRejected, onSessionClosed, role, sessionId]);
 
   const socketRef = useRef<Socket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -67,6 +71,9 @@ export function useProctorSocket({
     });
     socket.on("violation_rejected", (payload: { reason?: string }) => {
       handlers.current.onRejected?.(payload?.reason || "The server rejected an event.");
+    });
+    socket.on("session_closed", (payload: { status?: "terminated" | "ended" }) => {
+      handlers.current.onSessionClosed?.(payload?.status === "terminated" ? "terminated" : "ended");
     });
 
     return () => {

@@ -51,6 +51,12 @@ export function getSession(id: string) {
   return request<{ session: Session; violations: Violation[] }>(`/api/sessions/${id}`);
 }
 
+export function endSession(id: string) {
+  return request<{ session: Session }>(`/api/sessions/${id}/end`, {
+    method: "POST",
+  });
+}
+
 export async function getQuestions() {
   const data = await request<Question[] | { questions: Question[] }>("/api/questions");
   if (Array.isArray(data)) return data;

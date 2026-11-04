@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getSession, getQuestions } from "@/lib/api";
+import { endSession, getSession, getQuestions } from "@/lib/api";
 import { FALLBACK_QUESTIONS } from "@/lib/questions";
 import { HEARTBEAT_MS } from "@/lib/config";
 import type { Decision, Question, Violation, ViolationReport } from "@/lib/types";
@@ -17,7 +17,7 @@ import { CameraView } from "@/components/CameraView";
 import { QuestionPanel } from "@/components/QuestionPanel";
 import { ViolationLog } from "@/components/ViolationLog";
 
-type Stage = "permission" | "active" | "terminated";
+type Stage = "permission" | "active" | "terminated" | "ended" | "error";
 
 interface Props {
   sessionId: string;
@@ -35,19 +35,50 @@ export function InterviewClient({ sessionId }: Props) {
   const [warnBanner, setWarnBanner] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [candidateName, setCandidateName] = useState("Candidate");
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [ending, setEnding] = useState(false);
+  const [endError, setEndError] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const active = stage === "active";
+
+  const stopCamera = useCallback(() => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setStream(null);
+  }, []);
 
   // ── Load questions + session name ────────────────────────────
   useEffect(() => {
     getQuestions().then(setQuestions).catch(() => setQuestions(FALLBACK_QUESTIONS));
-    if (sessionId) {
-      getSession(sessionId)
-        .then(({ session }) => setCandidateName(session.candidateName))
-        .catch(() => {});
-    }
+    let cancelled = false;
+    getSession(sessionId)
+      .then(({ session }) => {
+        if (cancelled) return;
+        setCandidateName(session.candidateName);
+        if (session.status === "terminated" || session.status === "ended") {
+          setStage(session.status);
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setSessionError(error instanceof Error ? error.message : "Could not verify this interview session.");
+        setStage("error");
+      })
+      .finally(() => {
+        if (!cancelled) setSessionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [sessionId]);
+
+  useEffect(() => () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  }, []);
 
   // ── Violation emitter ────────────────────────────────────────
   const reportRef = useRef<((p: ViolationReport) => boolean) | null>(null);
@@ -87,12 +118,32 @@ export function InterviewClient({ sessionId }: Props) {
   const handleDecision = useCallback((d: Decision) => {
     setDecision(d);
     if (d.action === "terminate") {
+      stopCamera();
       setStage("terminated");
     } else if (d.action === "warn") {
       setWarnBanner(d.message);
       setTimeout(() => setWarnBanner(null), 7000);
     }
-  }, []);
+  }, [stopCamera]);
+
+  const handleSessionClosed = useCallback((status: "terminated" | "ended") => {
+    stopCamera();
+    setStage(status);
+  }, [stopCamera]);
+
+  const endInterview = useCallback(async () => {
+    stopCamera();
+    setStage("ended");
+    setEnding(true);
+    setEndError(null);
+    try {
+      await endSession(sessionId);
+    } catch (error) {
+      setEndError(error instanceof Error ? error.message : "Could not save the interview end status.");
+    } finally {
+      setEnding(false);
+    }
+  }, [sessionId, stopCamera]);
 
   const { connected, reportViolation, sendHeartbeat, sendQuestionChanged } = useProctorSocket({
     role: "candidate",
@@ -100,6 +151,7 @@ export function InterviewClient({ sessionId }: Props) {
     enabled: active,
     onDecision: handleDecision,
     onRejected: (reason) => console.warn("[proctor] server rejected violation:", reason),
+    onSessionClosed: handleSessionClosed,
   });
 
   useEffect(() => { reportRef.current = reportViolation; }, [reportViolation]);
@@ -142,6 +194,7 @@ export function InterviewClient({ sessionId }: Props) {
         video: { width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: true,
       });
+      streamRef.current = s;
       setStream(s);
       setStage("active");
     } catch (err) {
@@ -154,6 +207,28 @@ export function InterviewClient({ sessionId }: Props) {
   }, []);
 
   const total = localViolations.length;
+
+  if (sessionLoading) {
+    return (
+      <div className="gradient-bg" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div className="spinner" />
+      </div>
+    );
+  }
+
+  if (stage === "error") {
+    return (
+      <div className="overlay overlay-terminate">
+        <div className="glass" style={{ maxWidth: "440px", width: "100%", padding: "44px", textAlign: "center" }}>
+          <h2 style={{ fontFamily: "var(--font-display)", fontSize: "24px", marginBottom: "12px" }}>Interview unavailable</h2>
+          <p style={{ color: "var(--text-secondary)", fontSize: "14px", marginBottom: "28px" }}>{sessionError}</p>
+          <button className="btn btn-ghost" style={{ width: "100%" }} onClick={() => router.replace("/")}>
+            Return to Start
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   /* ── Permission screen ─────────────────────────────────────── */
   if (stage === "permission") {
@@ -179,7 +254,7 @@ export function InterviewClient({ sessionId }: Props) {
             <button id="allow-camera-btn" className="btn btn-primary btn-lg" onClick={requestCamera} style={{ width: "100%" }}>
               Allow Camera &amp; Start
             </button>
-            <button className="btn btn-ghost" onClick={() => router.push("/")} style={{ width: "100%" }}>
+            <button className="btn btn-ghost" onClick={() => router.replace("/")} style={{ width: "100%" }}>
               Go Back
             </button>
           </div>
@@ -188,22 +263,32 @@ export function InterviewClient({ sessionId }: Props) {
     );
   }
 
-  /* ── Terminated screen ─────────────────────────────────────── */
-  if (stage === "terminated") {
+  /* ── Ended and terminated screens ──────────────────────────── */
+  if (stage === "terminated" || stage === "ended") {
     return (
       <div className="overlay overlay-terminate">
         <div className="glass" style={{ maxWidth: "440px", width: "100%", padding: "44px", textAlign: "center" }}>
-          <div style={{ fontSize: "56px", marginBottom: "20px" }}>🚫</div>
-          <h2 style={{ fontFamily: "var(--font-display)", fontSize: "24px", marginBottom: "12px", color: "var(--terminate)" }}>
-            Interview Terminated
+          <div style={{ fontSize: "56px", marginBottom: "20px" }}>{stage === "terminated" ? "🚫" : "✅"}</div>
+          <h2 style={{ fontFamily: "var(--font-display)", fontSize: "24px", marginBottom: "12px", color: stage === "terminated" ? "var(--terminate)" : "var(--ok)" }}>
+            {stage === "terminated" ? "Interview Terminated" : "Interview Submitted"}
           </h2>
           <p style={{ color: "var(--text-secondary)", fontSize: "14px", lineHeight: 1.6, margin: "0 0 16px" }}>
-            {decision?.message ?? "The server has ended this session due to repeated violations."}
+            {stage === "terminated"
+              ? decision?.message ?? "The server has ended this session due to repeated violations."
+              : "Your interview is complete. Camera, microphone, and monitoring have been stopped."}
           </p>
+          {stage === "ended" && endError && (
+            <div role="alert" style={{ padding: "12px", marginBottom: "16px", borderRadius: "var(--radius-sm)", background: "var(--terminate-bg)", color: "var(--terminate)", fontSize: "13px" }}>
+              The interview ended on this device, but the server could not be updated: {endError}
+              <button className="btn btn-ghost" disabled={ending} onClick={() => { void endInterview(); }} style={{ width: "100%", marginTop: "10px" }}>
+                {ending ? "Saving…" : "Retry saving end status"}
+              </button>
+            </div>
+          )}
           <p style={{ fontFamily: "var(--font-mono)", fontSize: "13px", color: "var(--text-muted)", marginBottom: "28px" }}>
             Total violations: <strong style={{ color: "var(--terminate)" }}>{total}</strong>
           </p>
-          <button className="btn btn-ghost" style={{ width: "100%" }} onClick={() => router.push("/")}>
+          <button className="btn btn-ghost" style={{ width: "100%" }} onClick={() => router.replace("/")}>
             Return to Start
           </button>
         </div>
@@ -267,6 +352,8 @@ export function InterviewClient({ sessionId }: Props) {
               currentIndex={questionIdx}
               onNext={() => setQuestionIdx((i) => Math.min(i + 1, questions.length - 1))}
               onPrev={() => setQuestionIdx((i) => Math.max(i - 1, 0))}
+              onSubmit={() => { void endInterview(); }}
+              disabled={ending}
             />
           ) : (
             <div className="glass" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
