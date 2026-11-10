@@ -7,6 +7,7 @@ const { Server: SocketServer } = require("socket.io");
 
 const connectDB = require("./config/db");
 const registerProctorSocket = require("./sockets/proctor");
+const { startAnswerReviewWorker } = require("./services/answerReviewQueue");
 
 const sessionsRouter = require("./routes/sessions");
 const questionsRouter = require("./routes/questions");
@@ -18,6 +19,7 @@ const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
 async function main() {
   // ── Database ────────────────────────────────────────────────
   await connectDB();
+  startAnswerReviewWorker();
 
   // ── Express ─────────────────────────────────────────────────
   const app = express();

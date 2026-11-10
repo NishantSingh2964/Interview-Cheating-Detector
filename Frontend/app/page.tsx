@@ -131,7 +131,7 @@ export default function StartPage() {
 
           <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "12px", margin: 0, lineHeight: 1.6 }}>
             Your camera and microphone will be used for proctoring only.
-            No video is recorded — only behavioral signals are logged.
+            No video is recorded. Spoken-answer recording is optional and requires separate consent.
           </p>
         </div>
 

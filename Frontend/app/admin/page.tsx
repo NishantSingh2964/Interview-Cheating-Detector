@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { listSessions, getSession } from "@/lib/api";
+import { listSessions, getSession, retryAnswerAnalysis } from "@/lib/api";
 import { useProctorSocket } from "@/hooks/useProctorSocket";
 import { VIOLATION_LABELS } from "@/lib/labels";
-import type { Session, Violation } from "@/lib/types";
+import type { AnalysisResult, Session, Violation } from "@/lib/types";
 
 type SessionStatus = Session["status"];
 
@@ -38,6 +38,13 @@ function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+function getAiLikelihoodBand(band: AnalysisResult["aiLikelihoodBand"]) {
+  if (band === "high") return { label: "HIGH AI-LIKENESS ESTIMATE", className: "badge-error" };
+  if (band === "inconclusive") return { label: "INCONCLUSIVE ESTIMATE", className: "badge-warn" };
+  if (band === "low") return { label: "LOW AI-LIKENESS ESTIMATE", className: "badge-accent" };
+  return { label: "NOT SCORED", className: "badge-muted" };
+}
+
 const TYPE_ICONS: Record<string, string> = {
   no_face: "👤", multiple_faces: "👥", looking_away: "👀",
   object_detected: "📱", multiple_persons: "🧑‍🤝‍🧑",
@@ -51,6 +58,7 @@ export default function AdminPage() {
   const [liveViolations, setLiveViolations] = useState<(Violation & { sessionName?: string })[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [expandedViolations, setExpandedViolations] = useState<Violation[]>([]);
+  const [expandedAnalyses, setExpandedAnalyses] = useState<AnalysisResult[]>([]);
   const [loadingExpanded, setLoadingExpanded] = useState(false);
   const [serverErr, setServerErr] = useState<string | null>(null);
 
@@ -93,19 +101,54 @@ export default function AdminPage() {
     if (expanded === id) {
       setExpanded(null);
       setExpandedViolations([]);
+      setExpandedAnalyses([]);
       return;
     }
     setExpanded(id);
     setLoadingExpanded(true);
     try {
-      const { violations } = await getSession(id);
+      const { violations, answerAnalyses } = await getSession(id);
       setExpandedViolations(violations);
-    } catch {
-      setExpandedViolations([]);
+      setExpandedAnalyses(answerAnalyses);
+      setServerErr(null);
+    } catch (error) {
+      setServerErr(error instanceof Error ? error.message : "Could not load session details.");
     } finally {
       setLoadingExpanded(false);
     }
   }, [expanded]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    let active = true;
+    const refreshExpandedSession = async () => {
+      try {
+        const { violations, answerAnalyses } = await getSession(expanded);
+        if (!active) return;
+        setExpandedViolations(violations);
+        setExpandedAnalyses(answerAnalyses);
+      } catch (error) {
+        if (active) setServerErr(error instanceof Error ? error.message : "Could not refresh session details.");
+      }
+    };
+    const timer = setInterval(() => { void refreshExpandedSession(); }, 2000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [expanded]);
+
+  const retryEstimate = useCallback(async (analysisId: string) => {
+    try {
+      const { answerAnalysis } = await retryAnswerAnalysis(analysisId);
+      setExpandedAnalyses((current) =>
+        current.map((analysis) => analysis._id === analysisId ? answerAnalysis : analysis),
+      );
+      setServerErr(null);
+    } catch (error) {
+      setServerErr(error instanceof Error ? error.message : "Could not retry this estimate.");
+    }
+  }, []);
 
   const activeSessions = sessions.filter((s) => s.status === "active");
   const otherSessions = sessions.filter((s) => s.status !== "active");
@@ -156,7 +199,7 @@ export default function AdminPage() {
               </h2>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {activeSessions.map((s) => (
-                  <SessionCard key={s._id} session={s} isExpanded={expanded === s._id} expandedViolations={expanded === s._id ? expandedViolations : []} loading={loadingExpanded && expanded === s._id} onToggle={() => toggleExpand(s._id)} />
+                  <SessionCard key={s._id} session={s} isExpanded={expanded === s._id} expandedViolations={expanded === s._id ? expandedViolations : []} answerAnalyses={expanded === s._id ? expandedAnalyses : []} loading={loadingExpanded && expanded === s._id} onToggle={() => toggleExpand(s._id)} onRetryAnalysis={(analysisId) => { void retryEstimate(analysisId); }} />
                 ))}
               </div>
             </section>
@@ -170,7 +213,7 @@ export default function AdminPage() {
               </h2>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {otherSessions.map((s) => (
-                  <SessionCard key={s._id} session={s} isExpanded={expanded === s._id} expandedViolations={expanded === s._id ? expandedViolations : []} loading={loadingExpanded && expanded === s._id} onToggle={() => toggleExpand(s._id)} />
+                  <SessionCard key={s._id} session={s} isExpanded={expanded === s._id} expandedViolations={expanded === s._id ? expandedViolations : []} answerAnalyses={expanded === s._id ? expandedAnalyses : []} loading={loadingExpanded && expanded === s._id} onToggle={() => toggleExpand(s._id)} onRetryAnalysis={(analysisId) => { void retryEstimate(analysisId); }} />
                 ))}
               </div>
             </section>
@@ -233,12 +276,14 @@ export default function AdminPage() {
 }
 
 /* ── SessionCard sub-component ─────────────────────────────── */
-function SessionCard({ session, isExpanded, expandedViolations, loading, onToggle }: {
+function SessionCard({ session, isExpanded, expandedViolations, answerAnalyses, loading, onToggle, onRetryAnalysis }: {
   session: Session;
   isExpanded: boolean;
   expandedViolations: Violation[];
+  answerAnalyses: AnalysisResult[];
   loading: boolean;
   onToggle: () => void;
+  onRetryAnalysis: (analysisId: string) => void;
 }) {
   const pct = Math.min(100, (session.violationCount / 5) * 100);
   const statusClass = STATUS_CLASS[session.status];
@@ -294,10 +339,68 @@ function SessionCard({ session, isExpanded, expandedViolations, loading, onToggl
             <div style={{ display: "flex", justifyContent: "center", padding: "24px" }}>
               <div className="spinner" />
             </div>
-          ) : expandedViolations.length === 0 ? (
+          ) : expandedViolations.length === 0 && answerAnalyses.length === 0 ? (
             <p style={{ color: "var(--text-muted)", fontSize: "13px", margin: 0, textAlign: "center", padding: "20px" }}>No events recorded.</p>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "280px", overflowY: "auto" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "420px", overflowY: "auto" }}>
+              {answerAnalyses.map((analysis) => {
+                const processingLabel = analysis.processingStatus === "queued"
+                  ? analysis.attempts > 0 ? "RETRY QUEUED" : "QUEUED"
+                  : analysis.processingStatus === "processing"
+                    ? analysis.attempts > 1 ? "RETRYING" : "PROCESSING"
+                    : analysis.processingStatus === "failed" ? "FAILED"
+                      : analysis.processingStatus === "not_scored" ? "NOT SCORED"
+                        : null;
+                const band = getAiLikelihoodBand(analysis.aiLikelihoodBand);
+                const label = processingLabel ?? band.label;
+                const className = processingLabel
+                  ? analysis.processingStatus === "failed" ? "badge-error"
+                    : analysis.processingStatus === "not_scored" ? "badge-muted" : "badge-warn"
+                  : band.className;
+                return (
+                  <article key={`answer-${analysis.question}`} style={{ padding: "12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--bg-elevated)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "center" }}>
+                      <strong style={{ fontSize: "12px" }}>AI-likeness estimate · Q{analysis.question}</strong>
+                      <span className={`badge ${className}`} style={{ fontSize: "9px" }}>
+                        {label}
+                      </span>
+                    </div>
+                    <p style={{ margin: "8px 0 4px", fontSize: "11px", color: "var(--text-muted)" }}>Question: {analysis.prompt}</p>
+                    <p style={{ margin: "4px 0", fontSize: "10px", color: "var(--text-muted)" }}>
+                      Entry method: {analysis.answerSource ?? "spoken"}
+                    </p>
+                    <p style={{ margin: "4px 0", fontSize: "11px", color: "var(--text-secondary)" }}>
+                      Model estimate: {typeof analysis.aiLikelihoodScore === "number" ? `${analysis.aiLikelihoodScore}/100` : "Not scored"}
+                    </p>
+                    {analysis.processingStatus === "failed" && analysis.lastError && (
+                      <p role="alert" style={{ margin: "4px 0", color: "var(--terminate)", fontSize: "11px" }}>
+                        Estimate failed: {analysis.lastError}
+                      </p>
+                    )}
+                    {analysis.processingStatus === "failed" && (
+                      <button
+                        className="btn btn-ghost"
+                        style={{ margin: "4px 0", padding: "4px 8px", fontSize: "10px" }}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onRetryAnalysis(analysis._id);
+                        }}
+                      >
+                        Retry estimate
+                      </button>
+                    )}
+                    {analysis.pasteDetected && (
+                      <p style={{ margin: "4px 0" }}>
+                        <span className="badge badge-warn" style={{ fontSize: "9px" }}>PASTE EVENT OBSERVED</span>
+                      </p>
+                    )}
+                    <p style={{ margin: "4px 0", fontSize: "12px", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>Answer: {analysis.answer}</p>
+                    <p style={{ margin: "8px 0 0", fontSize: "10px", color: "var(--text-muted)" }}>
+                      Experimental, uncalibrated model estimate—not a measured probability or proof of authorship. Bands: 0–39 low, 40–69 inconclusive, 70–100 high. The score is based on text only, is not affected by paste detection, and should not be used alone to judge a candidate. Paste status is browser metadata. Saved for up to 7 days.
+                    </p>
+                  </article>
+                );
+              })}
               {expandedViolations.map((v, i) => (
                 <div key={v._id ?? i} className={`violation-chip ${amber.has(v.type) ? "amber" : ""}`}>
                   <span style={{ fontSize: "14px", flexShrink: 0 }}>{TYPE_ICONS[v.type] ?? "🚨"}</span>

@@ -14,7 +14,47 @@ The model is downloaded separately and ignored by Git; the server returns `503` 
 
 Enrollment requires explicit candidate consent. The server processes the submitted clips in memory and stores only a session voiceprint; ending the interview clears the voiceprint and consent metadata. Raw audio clips are not persisted.
 
+## Spoken and typed answer review
+
+At the start of an interview, candidates choose writing or speaking mode and are asked once whether to consent to answer processing. Writing-mode candidates may decline and continue, but answers are not saved for AI review in that case. Speaking mode requires consent because recordings are sent to the local Whisper service for transcription. With consent, the answer or transcript is sent to the configured provider for an experimental estimate and saved for the interviewer for up to 7 days; raw answer audio is not saved. Copy and paste are enabled for testing and do not create proctoring violations. Paste-event metadata and answer entry method are not sent to the model provider and do not identify the text's source.
+
+Install Python 3.9 or later. From `Server`, create and activate a virtual environment and install the transcription dependencies:
+
+```powershell
+python -m venv transcription\.venv
+.\transcription\.venv\Scripts\Activate.ps1
+python -m pip install -r transcription\requirements.txt
+```
+
+In the first PowerShell window, start the local Whisper service:
+
+```powershell
+npm run transcription
+```
+
+The default `base.en` model is downloaded on first use and runs locally on CPU. Keep the service running. In `Server\.env`, configure OpenRouter:
+
+```env
+ANSWER_REVIEW_PROVIDER=openrouter
+OPENROUTER_API_KEY=your_openrouter_key
+OPENROUTER_MODEL=provider/model:free
+```
+
+Create a key in [OpenRouter settings](https://openrouter.ai/settings/keys) and choose a currently available free model from the [OpenRouter free models list](https://openrouter.ai/models?max_price=0). Use its exact model ID, including `:free` when that suffix is shown. Free model availability, rate limits, and account requirements vary; this is not unlimited usage. Keep the key in the server `.env`, never in frontend code or source control. OpenRouter is the default provider. To continue using Ollama instead, set `ANSWER_REVIEW_PROVIDER=ollama`, `OLLAMA_API_KEY`, and `OLLAMA_MODEL`. Then start the Node server from `Server`:
+
+```powershell
+npm run dev
+```
+
+Start the frontend as usual. Candidates choose their response mode and answer-processing consent once before starting. In writing mode, clicking Next (or Submit interview on the final question) saves and queues the answer only when consent was given; in speaking mode, the recording is transcribed locally and the transcript is queued with consent. The candidate waits only for the queue acknowledgment, not for the model. A MongoDB-backed worker scores jobs in the background. Answers under 40 words are saved as "Not scored" without calling the provider. Temporary rate-limit, timeout, network, and provider-server errors are retried up to five times with `Retry-After` or exponential backoff; permanent request/configuration errors fail immediately. The admin page shows Queued, Processing, Retrying, Completed score bands, or Failed, and refreshes queue status while a session is open. Failed jobs can be manually retried by an admin.
+
+For longer answers, the provider returns an experimental 0-100 AI-likeness estimate based only on the question and answer text. The admin view groups scores into 0-39 "Low AI-likeness estimate," 40-69 "Inconclusive estimate," and 70-100 "High AI-likeness estimate." These are arbitrary experiment bands over a subjective, uncalibrated model opinion—not measured probabilities, confidence levels, or proof of authorship. They must not be used alone to judge a candidate. The configured provider receives the answer text when analysis is requested.
+
+Answer text and scores expire after 7 days. The admin view may show "Paste event observed" when the browser reports a paste event. This is browser metadata only: it does not identify the text source or establish who wrote it, and it is not sent to the model. The AI-likeness estimate is not a reliable authorship detector; use it only in controlled testing against known-source answers and track false positives as well as misses. The score should not be treated as proof or an automatic penalty. The admin dashboard currently has no authentication; do not expose this project publicly with real candidate data until access controls are in place.
+
 ## Live speaker comparison
+
+Speaking mode starts the existing voice enrollment flow. Candidates give separate, explicit consent before creating a session-only voice reference; they can skip enrollment and still use speaking mode for answer transcription. Live speaker comparison runs only for an enrolled speaking-mode session. The voice enrollment model and threshold requirements below still apply.
 
 The browser sends VAD speech segments (3–15 seconds) only for enrolled sessions. The server computes each embedding and compares it with the session voiceprint. When at least two of the last three scores are below the configured similarity threshold, it records an `other_voice` review signal and applies a 10-second cooldown. Audio is processed in memory and not persisted; the short comparison window is also kept only in server memory.
 

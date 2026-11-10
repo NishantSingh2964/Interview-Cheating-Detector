@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { endSession, enrollVoice, getSession, getQuestions } from "@/lib/api";
+import { analyzeAnswer, endSession, enrollVoice, getSession, getQuestions, saveInterviewPreferences, transcribeAnswer } from "@/lib/api";
 import { FALLBACK_QUESTIONS } from "@/lib/questions";
 import { HEARTBEAT_MS } from "@/lib/config";
 import { VIOLATION_LABELS } from "@/lib/labels";
-import type { Decision, Question, Violation, ViolationReport } from "@/lib/types";
+import type { AnalysisResult, CandidateAnswerMode, Decision, Question, Violation, ViolationReport } from "@/lib/types";
 
 import { useFaceMonitor } from "@/hooks/useFaceMonitor";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
@@ -19,8 +19,32 @@ import { CameraView } from "@/components/CameraView";
 import { QuestionPanel } from "@/components/QuestionPanel";
 import { ViolationLog } from "@/components/ViolationLog";
 
-type Stage = "enrollment" | "enrolling" | "permission" | "active" | "terminated" | "ended" | "error";
+type Stage = "setup" | "enrollment" | "enrolling" | "permission" | "active" | "terminated" | "ended" | "error";
 type ViolationToast = { id: number; message: string };
+type AnswerStatus = "idle" | "recording" | "transcribing" | "ready" | "analyzing" | "queued" | "error";
+type AnswerSource = "typed" | "spoken";
+interface AnswerState {
+  status: AnswerStatus;
+  transcript: string;
+  source: AnswerSource;
+  pasteDetected: boolean;
+  analysis: AnalysisResult | null;
+  error: string | null;
+}
+interface ActiveRecording {
+  recorder: MediaRecorder;
+  chunks: Blob[];
+  question: number;
+  cancelled: boolean;
+}
+const EMPTY_ANSWER_STATE: AnswerState = {
+  status: "idle",
+  transcript: "",
+  source: "typed",
+  pasteDetected: false,
+  analysis: null,
+  error: null,
+};
 const VOICE_ENROLLMENT_PROMPTS = [
   "I am ready to begin my interview and will answer each question in my own words.",
   "I am speaking at a comfortable pace and using my normal speaking voice.",
@@ -28,6 +52,7 @@ const VOICE_ENROLLMENT_PROMPTS = [
 ];
 const MIN_VOICE_CLIP_SAMPLES = 16000 * 3;
 const MAX_LIVE_VOICE_CLIP_SAMPLES = 16000 * 15;
+const ANSWER_REVIEW_CONSENT_VERSION = "answer-ai-likeness-v2";
 
 function violationKey(type: string, reason: string, time: string) {
   return `${type}|${reason}|${new Date(time).getTime()}`;
@@ -60,10 +85,18 @@ export function InterviewClient({ sessionId }: Props) {
   const [voiceComparisonEnabled, setVoiceComparisonEnabled] = useState<boolean | null>(null);
   const [voiceEnrollmentError, setVoiceEnrollmentError] = useState<string | null>(null);
   const [voiceEnrollmentSaving, setVoiceEnrollmentSaving] = useState(false);
+  const [answerConsent, setAnswerConsent] = useState(false);
+  const [candidateMode, setCandidateMode] = useState<CandidateAnswerMode | null>(null);
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
+  const [preferencesError, setPreferencesError] = useState<string | null>(null);
+  const [answerStates, setAnswerStates] = useState<Record<number, AnswerState>>({});
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const activeRecordingRef = useRef<ActiveRecording | null>(null);
   const pendingServerViolationKeysRef = useRef(new Set<string>());
+  const answerQueueRequestRef = useRef(false);
+  const nextLocalViolationIdRef = useRef(0);
   const nextToastIdRef = useRef(0);
   const toastTimersRef = useRef(new Map<number, ReturnType<typeof setTimeout>>());
   const active = stage === "active";
@@ -84,6 +117,14 @@ export function InterviewClient({ sessionId }: Props) {
     setStream(null);
   }, []);
 
+  const cancelAnswerRecording = useCallback(() => {
+    const recording = activeRecordingRef.current;
+    if (!recording) return;
+    recording.cancelled = true;
+    if (recording.recorder.state !== "inactive") recording.recorder.stop();
+    activeRecordingRef.current = null;
+  }, []);
+
   // ── Load questions + session name ────────────────────────────
   useEffect(() => {
     getQuestions().then(setQuestions).catch(() => setQuestions(FALLBACK_QUESTIONS));
@@ -93,10 +134,19 @@ export function InterviewClient({ sessionId }: Props) {
         if (cancelled) return;
         setCandidateName(session.candidateName);
         setVoiceEnrolled(session.voiceEnrolled);
+        setCandidateMode(session.answerMode ?? null);
+        setAnswerConsent(
+          Boolean(
+            session.answerReviewConsentAt &&
+            session.answerReviewConsentVersion === ANSWER_REVIEW_CONSENT_VERSION,
+          ),
+        );
         if (session.status === "terminated" || session.status === "ended") {
           setStage(session.status);
+        } else if (!session.answerMode) {
+          setStage("setup");
         } else {
-          setStage(session.voiceEnrolled ? "permission" : "enrollment");
+          setStage(session.answerMode === "speaking" && !session.voiceEnrolled ? "enrollment" : "permission");
         }
       })
       .catch((error) => {
@@ -115,6 +165,14 @@ export function InterviewClient({ sessionId }: Props) {
   useEffect(() => () => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+  }, []);
+
+  useEffect(() => () => {
+    const recording = activeRecordingRef.current;
+    if (recording) {
+      recording.cancelled = true;
+      if (recording.recorder.state !== "inactive") recording.recorder.stop();
+    }
   }, []);
 
   useEffect(() => () => {
@@ -144,7 +202,7 @@ export function InterviewClient({ sessionId }: Props) {
       setLocalViolations((prev) => [
         ...prev,
         {
-          _id: `local-${Date.now()}`,
+          _id: `local-${Date.now()}-${++nextLocalViolationIdRef.current}`,
           sessionId,
           question: report.question,
           type: report.type,
@@ -169,20 +227,193 @@ export function InterviewClient({ sessionId }: Props) {
   const handleDecision = useCallback((d: Decision) => {
     setDecision(d);
     if (d.action === "terminate") {
+      cancelAnswerRecording();
       stopCamera();
       setStage("terminated");
     } else if (d.action === "warn") {
       setWarnBanner(d.message);
       setTimeout(() => setWarnBanner(null), 7000);
     }
-  }, [stopCamera]);
+  }, [cancelAnswerRecording, stopCamera]);
 
   const handleSessionClosed = useCallback((status: "terminated" | "ended") => {
+    cancelAnswerRecording();
     stopCamera();
     setStage(status);
-  }, [stopCamera]);
+  }, [cancelAnswerRecording, stopCamera]);
+
+  const updateAnswerState = useCallback((question: number, update: Partial<AnswerState>) => {
+    setAnswerStates((current) => ({
+      ...current,
+      [question]: { ...(current[question] ?? EMPTY_ANSWER_STATE), ...update },
+    }));
+  }, []);
+
+  const savePreferences = useCallback(async () => {
+    if (!candidateMode || preferencesSaving) return;
+    if (candidateMode === "speaking" && !answerConsent) return;
+    setPreferencesSaving(true);
+    setPreferencesError(null);
+    try {
+      await saveInterviewPreferences(sessionId, {
+        answerMode: candidateMode,
+        answerReviewConsent: answerConsent,
+      });
+      setStage(candidateMode === "speaking" && !voiceEnrolled ? "enrollment" : "permission");
+    } catch (error) {
+      setPreferencesError(error instanceof Error ? error.message : "Could not save your interview preferences.");
+    } finally {
+      setPreferencesSaving(false);
+    }
+  }, [answerConsent, candidateMode, preferencesSaving, sessionId, voiceEnrolled]);
+
+  const startAnswerRecording = useCallback(() => {
+    if (candidateMode !== "speaking" || !answerConsent) return;
+    const audioTracks = streamRef.current?.getAudioTracks() ?? [];
+    if (!audioTracks.length) {
+      updateAnswerState(questionIdx + 1, {
+        status: "error",
+        error: "Microphone is unavailable. Check microphone permission and retry.",
+      });
+      return;
+    }
+    if (typeof MediaRecorder === "undefined") {
+      updateAnswerState(questionIdx + 1, {
+        status: "error",
+        error: "This browser does not support audio recording. Try a current version of Chrome or Edge.",
+      });
+      return;
+    }
+
+    const mimeType = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus"]
+      .find((type) => MediaRecorder.isTypeSupported(type));
+    if (!mimeType) {
+      updateAnswerState(questionIdx + 1, {
+        status: "error",
+        error: "This browser does not support a compatible recording format.",
+      });
+      return;
+    }
+
+    try {
+      const recorder = new MediaRecorder(new MediaStream(audioTracks), { mimeType });
+      const recording: ActiveRecording = {
+        recorder,
+        chunks: [],
+        question: questionIdx + 1,
+        cancelled: false,
+      };
+      activeRecordingRef.current = recording;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recording.chunks.push(event.data);
+      };
+      recorder.onerror = () => {
+        recording.cancelled = true;
+        updateAnswerState(recording.question, {
+          status: "error",
+          error: "The browser could not record this answer. Please try again.",
+        });
+        activeRecordingRef.current = null;
+      };
+      recorder.onstop = async () => {
+        if (activeRecordingRef.current === recording) activeRecordingRef.current = null;
+        if (recording.cancelled) return;
+        const audio = new Blob(recording.chunks, { type: recorder.mimeType });
+        if (!audio.size) {
+          updateAnswerState(recording.question, {
+            status: "error",
+            error: "No audio was recorded. Check your microphone and try again.",
+          });
+          return;
+        }
+
+        updateAnswerState(recording.question, { status: "transcribing", error: null });
+        try {
+          const result = await transcribeAnswer({
+            sessionId,
+            question: recording.question,
+            audio,
+          });
+          updateAnswerState(recording.question, {
+            status: "ready",
+            transcript: result.transcript,
+            source: "spoken",
+            pasteDetected: false,
+            analysis: null,
+            error: null,
+          });
+        } catch (error) {
+          updateAnswerState(recording.question, {
+            status: "error",
+            error: error instanceof Error ? error.message : "Could not transcribe this answer.",
+          });
+        }
+      };
+      recorder.start();
+      updateAnswerState(recording.question, {
+        status: "recording",
+        transcript: "",
+        source: "spoken",
+        pasteDetected: false,
+        analysis: null,
+        error: null,
+      });
+    } catch (error) {
+      updateAnswerState(questionIdx + 1, {
+        status: "error",
+        error: error instanceof Error ? error.message : "Could not start recording.",
+      });
+    }
+  }, [answerConsent, candidateMode, questionIdx, sessionId, updateAnswerState]);
+
+  const stopAnswerRecording = useCallback(() => {
+    const recording = activeRecordingRef.current;
+    if (recording && recording.recorder.state !== "inactive") recording.recorder.stop();
+  }, []);
+
+  const queueAnswerForQuestion = useCallback(async (questionNumber: number) => {
+    const answerState = answerStates[questionNumber] ?? EMPTY_ANSWER_STATE;
+    const prompt = questions[questionNumber - 1]?.prompt;
+    if (["recording", "transcribing", "analyzing"].includes(answerState.status)) return false;
+    if (answerState.status === "queued") return true;
+    if (!answerConsent || !prompt || !answerState.transcript.trim()) return true;
+    if (answerQueueRequestRef.current) return false;
+
+    answerQueueRequestRef.current = true;
+    updateAnswerState(questionNumber, { status: "analyzing", error: null });
+    try {
+      const { answerAnalysis } = await analyzeAnswer({
+        sessionId,
+        question: questionNumber,
+        prompt,
+        answer: answerState.transcript,
+        answerSource: answerState.source,
+        pasteDetected: answerState.pasteDetected,
+      });
+      updateAnswerState(questionNumber, {
+        status: "queued",
+        analysis: answerAnalysis,
+        error: null,
+      });
+      return true;
+    } catch (error) {
+      updateAnswerState(questionNumber, {
+        status: "ready",
+        error: error instanceof Error ? error.message : "Could not send this answer for review.",
+      });
+      return false;
+    } finally {
+      answerQueueRequestRef.current = false;
+    }
+  }, [answerConsent, answerStates, questions, sessionId, updateAnswerState]);
+
+  const advanceQuestion = useCallback(async () => {
+    const queued = await queueAnswerForQuestion(questionIdx + 1);
+    if (queued) setQuestionIdx((index) => Math.min(index + 1, questions.length - 1));
+  }, [queueAnswerForQuestion, questionIdx, questions.length]);
 
   const endInterview = useCallback(async () => {
+    cancelAnswerRecording();
     stopCamera();
     setStage("ended");
     setEnding(true);
@@ -194,7 +425,12 @@ export function InterviewClient({ sessionId }: Props) {
     } finally {
       setEnding(false);
     }
-  }, [sessionId, stopCamera]);
+  }, [cancelAnswerRecording, sessionId, stopCamera]);
+
+  const submitInterview = useCallback(async () => {
+    const queued = await queueAnswerForQuestion(questionIdx + 1);
+    if (queued) await endInterview();
+  }, [endInterview, queueAnswerForQuestion, questionIdx]);
 
   const captureEnrollmentClip = useCallback((samples: Float32Array) => {
     if (samples.length < MIN_VOICE_CLIP_SAMPLES) return;
@@ -206,7 +442,7 @@ export function InterviewClient({ sessionId }: Props) {
   }, []);
 
   const startVoiceEnrollment = useCallback(async () => {
-    if (!voiceConsent) return;
+    if (candidateMode !== "speaking" || !voiceConsent) return;
     setVoiceEnrollmentError(null);
     setVoiceClips([]);
     try {
@@ -228,10 +464,10 @@ export function InterviewClient({ sessionId }: Props) {
           : "Could not access the microphone for voice enrollment.",
       );
     }
-  }, [voiceConsent]);
+  }, [candidateMode, voiceConsent]);
 
   const submitVoiceEnrollment = useCallback(async () => {
-    if (!voiceConsent || voiceClips.length !== VOICE_ENROLLMENT_PROMPTS.length) return;
+    if (candidateMode !== "speaking" || !voiceConsent || voiceClips.length !== VOICE_ENROLLMENT_PROMPTS.length) return;
     setVoiceEnrollmentSaving(true);
     setVoiceEnrollmentError(null);
     try {
@@ -248,7 +484,7 @@ export function InterviewClient({ sessionId }: Props) {
     } finally {
       setVoiceEnrollmentSaving(false);
     }
-  }, [sessionId, stopCamera, voiceClips, voiceConsent]);
+  }, [candidateMode, sessionId, stopCamera, voiceClips, voiceConsent]);
 
   const { connected, reportViolation, sendHeartbeat, sendQuestionChanged, sendVoiceSegment } = useProctorSocket({
     role: "candidate",
@@ -291,12 +527,13 @@ export function InterviewClient({ sessionId }: Props) {
   const { status: faceStatus, faceCount } = useFaceMonitor(videoRef, active, emit);
   useWindowMonitor(active, emit);
   const { level: soundLevel } = useSoundMonitor(stream, active, emit);
+  const voiceModeEnabled = candidateMode === "speaking";
   const { status: voiceActivityStatus, speaking } = useVoiceActivity(
     stream,
-    active || stage === "enrolling",
-    stage === "enrolling"
+    voiceModeEnabled && (active || stage === "enrolling"),
+    voiceModeEnabled && stage === "enrolling"
       ? captureEnrollmentClip
-      : active && voiceEnrolled ? reportLiveVoiceSegment : undefined,
+      : voiceModeEnabled && active && voiceEnrolled ? reportLiveVoiceSegment : undefined,
   );
   const { status: objectStatus, boxes } = useObjectDetect(videoRef, active, emit);
 
@@ -304,12 +541,13 @@ export function InterviewClient({ sessionId }: Props) {
   useEffect(() => {
     if (!active) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "ArrowRight") setQuestionIdx((i) => Math.min(i + 1, questions.length - 1));
+      if (activeRecordingRef.current || ["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
+      if (e.key === "ArrowRight") void advanceQuestion();
       if (e.key === "ArrowLeft")  setQuestionIdx((i) => Math.max(i - 1, 0));
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [active, questions.length]);
+  }, [active, advanceQuestion, questions.length]);
 
   // ── Camera permission ────────────────────────────────────────
   const requestCamera = useCallback(async () => {
@@ -337,6 +575,7 @@ export function InterviewClient({ sessionId }: Props) {
   }, []);
 
   const total = localViolations.filter((violation) => violation.type !== "other_voice").length;
+  const currentAnswerState = answerStates[questionIdx + 1] ?? EMPTY_ANSWER_STATE;
 
   if (sessionLoading) {
     return (
@@ -360,7 +599,7 @@ export function InterviewClient({ sessionId }: Props) {
     );
   }
 
-  if (stage === "enrollment" || stage === "enrolling") {
+  if (candidateMode === "speaking" && (stage === "enrollment" || stage === "enrolling")) {
     const promptIndex = Math.min(voiceClips.length, VOICE_ENROLLMENT_PROMPTS.length - 1);
     const clipsReady = voiceClips.length === VOICE_ENROLLMENT_PROMPTS.length;
 
@@ -457,6 +696,77 @@ export function InterviewClient({ sessionId }: Props) {
             style={{ width: "100%" }}
           >
             Skip voice enrollment
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (stage === "setup") {
+    const canContinue = candidateMode !== null &&
+      !(candidateMode === "speaking" && !answerConsent) &&
+      !preferencesSaving;
+    return (
+      <div className="gradient-bg" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+        <div className="glass" style={{ maxWidth: "620px", width: "100%", padding: "36px" }}>
+          <h2 style={{ fontFamily: "var(--font-display)", fontSize: "24px", margin: "0 0 8px" }}>
+            Choose how you&apos;ll answer
+          </h2>
+          <p style={{ color: "var(--text-secondary)", fontSize: "14px", lineHeight: 1.6, margin: "0 0 20px" }}>
+            Choose the response mode you want to use for this interview.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "20px" }}>
+            {([
+              ["writing", "✍️", "Writing mode", "Type your response to each question."],
+              ["speaking", "🎙️", "Speaking mode", "Enroll a session-only voice reference, then speak each answer."],
+            ] as const).map(([mode, icon, title, description]) => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={candidateMode === mode}
+                onClick={() => setCandidateMode(mode)}
+                className="glass"
+                style={{
+                  padding: "18px",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  border: candidateMode === mode ? "1px solid var(--accent)" : "1px solid var(--border)",
+                  color: "var(--text-primary)",
+                }}
+              >
+                <span style={{ display: "block", fontSize: "24px", marginBottom: "8px" }}>{icon}</span>
+                <strong style={{ display: "block", marginBottom: "6px" }}>{title}</strong>
+                <span style={{ color: "var(--text-muted)", fontSize: "12px", lineHeight: 1.5 }}>{description}</span>
+              </button>
+            ))}
+          </div>
+          <label style={{ display: "flex", gap: "10px", alignItems: "flex-start", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.55, marginBottom: "12px" }}>
+            <input
+              type="checkbox"
+              checked={answerConsent}
+              onChange={(event) => setAnswerConsent(event.target.checked)}
+              disabled={preferencesSaving}
+              style={{ marginTop: "3px" }}
+            />
+            <span>
+              I consent to my answer being sent to the configured AI provider for an experimental, uncalibrated AI-likeness estimate and saved for the interviewer for up to 7 days. In speaking mode, my recording will also be sent to the interview server for local transcription; the audio is not saved. This estimate cannot prove who wrote an answer.
+            </span>
+          </label>
+          {candidateMode === "speaking" && !answerConsent && (
+            <p style={{ color: "var(--warn)", fontSize: "12px", lineHeight: 1.5 }}>
+              Speaking mode requires consent for local audio transcription. To continue without AI review, choose writing mode and leave consent unchecked.
+            </p>
+          )}
+          {preferencesError && (
+            <p role="alert" style={{ color: "var(--terminate)", fontSize: "13px" }}>{preferencesError}</p>
+          )}
+          <button
+            className="btn btn-primary btn-lg"
+            disabled={!canContinue}
+            onClick={() => { void savePreferences(); }}
+            style={{ width: "100%", marginTop: "12px" }}
+          >
+            {preferencesSaving ? "Saving preferences…" : "Continue"}
           </button>
         </div>
       </div>
@@ -582,7 +892,7 @@ export function InterviewClient({ sessionId }: Props) {
             faceStatus={faceStatus}
             objectStatus={objectStatus}
             voiceActivityStatus={voiceActivityStatus}
-            voiceEnrolled={voiceEnrolled}
+            voiceEnrolled={voiceModeEnabled && voiceEnrolled}
             voiceComparisonEnabled={voiceComparisonEnabled}
             speaking={speaking}
             soundLevel={soundLevel}
@@ -596,9 +906,22 @@ export function InterviewClient({ sessionId }: Props) {
             <QuestionPanel
               questions={questions}
               currentIndex={questionIdx}
-              onNext={() => setQuestionIdx((i) => Math.min(i + 1, questions.length - 1))}
+              answerMode={candidateMode ?? "writing"}
+              answerConsent={answerConsent}
+              answerState={currentAnswerState}
+              onTranscriptChange={(transcript) => updateAnswerState(questionIdx + 1, {
+                transcript,
+                source: "typed",
+                status: "ready",
+                analysis: null,
+                error: null,
+              })}
+              onAnswerPaste={() => updateAnswerState(questionIdx + 1, { pasteDetected: true })}
+              onStartRecording={startAnswerRecording}
+              onStopRecording={stopAnswerRecording}
+              onNext={() => { void advanceQuestion(); }}
               onPrev={() => setQuestionIdx((i) => Math.max(i - 1, 0))}
-              onSubmit={() => { void endInterview(); }}
+              onSubmit={() => { void submitInterview(); }}
               disabled={ending}
             />
           ) : (

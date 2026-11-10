@@ -20,6 +20,7 @@ export type DecisionAction = "ok" | "warn" | "terminate";
 
 export type SessionStatus = "active" | "terminated" | "ended";
 export type SessionEndReason = "submitted" | "heartbeat_timeout" | "violation_limit";
+export type CandidateAnswerMode = "writing" | "speaking";
 
 export interface Question {
   id: number;
@@ -34,6 +35,9 @@ export interface Session {
   endReason?: SessionEndReason | null;
   currentQuestion: number;
   violationCount: number;
+  answerMode?: CandidateAnswerMode | null;
+  answerReviewConsentAt?: string | null;
+  answerReviewConsentVersion?: string | null;
   voiceEnrolled: boolean;
   startedAt: string;
   endedAt: string | null;
@@ -67,8 +71,19 @@ export interface Decision {
 }
 
 export interface AnalysisResult {
-  aiLikelihood: number;
-  note?: string;
+  _id: string;
+  question: number;
+  prompt: string;
+  answer: string;
+  answerSource: "typed" | "spoken";
+  pasteDetected: boolean;
+  aiLikelihoodScore: number | null;
+  aiLikelihoodBand: "low" | "inconclusive" | "high" | "not_scored";
+  processingStatus: "queued" | "processing" | "completed" | "failed" | "not_scored";
+  attempts: number;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+  analyzedAt: string;
 }
 
 export interface DetectionBox {

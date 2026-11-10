@@ -1,3 +1,5 @@
 node_modules/
 .env
 models/*.onnx
+transcription/.venv/
+transcription/__pycache__/

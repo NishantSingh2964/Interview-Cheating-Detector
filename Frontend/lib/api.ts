@@ -1,5 +1,5 @@
 import { SERVER_URL } from "@/lib/config";
-import type { AnalysisResult, Question, Session, Violation } from "@/lib/types";
+import type { AnalysisResult, CandidateAnswerMode, Question, Session, Violation } from "@/lib/types";
 
 export class ApiError extends Error {
   status?: number;
@@ -48,12 +48,22 @@ export function listSessions() {
 }
 
 export function getSession(id: string) {
-  return request<{ session: Session; violations: Violation[] }>(`/api/sessions/${id}`);
+  return request<SessionDetails>(`/api/sessions/${id}`);
 }
 
 export function endSession(id: string) {
   return request<{ session: Session }>(`/api/sessions/${id}/end`, {
     method: "POST",
+  });
+}
+
+export function saveInterviewPreferences(id: string, input: {
+  answerMode: CandidateAnswerMode;
+  answerReviewConsent: boolean;
+}) {
+  return request<{ session: Session }>(`/api/sessions/${encodeURIComponent(id)}/preferences`, {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }
 
@@ -92,9 +102,54 @@ export async function getQuestions() {
   throw new ApiError("The question list from the server was not usable.");
 }
 
-export function analyzeAnswer(input: { sessionId: string; question: number; answer: string }) {
-  return request<AnalysisResult>("/api/analysis", {
+export async function transcribeAnswer(input: {
+  sessionId: string;
+  question: number;
+  audio: Blob;
+}) {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${SERVER_URL}/api/analysis/transcribe?sessionId=${encodeURIComponent(input.sessionId)}&question=${input.question}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": input.audio.type.split(";")[0],
+          "X-Answer-Review-Consent": "answer-ai-likeness-v2",
+        },
+        body: input.audio,
+      },
+    );
+  } catch {
+    throw new ApiError("The interview server is not reachable.");
+  }
+  if (!response.ok) throw new ApiError(await readError(response), response.status);
+  return (await response.json()) as { transcript: string };
+}
+
+export function analyzeAnswer(input: {
+  sessionId: string;
+  question: number;
+  prompt: string;
+  answer: string;
+  answerSource: "typed" | "spoken";
+  pasteDetected: boolean;
+}) {
+  return request<{ answerAnalysis: AnalysisResult }>("/api/analysis", {
     method: "POST",
+    headers: { "X-Answer-Review-Consent": "answer-ai-likeness-v2" },
     body: JSON.stringify(input),
   });
+}
+
+export function retryAnswerAnalysis(id: string) {
+  return request<{ answerAnalysis: AnalysisResult }>(`/api/analysis/${encodeURIComponent(id)}/retry`, {
+    method: "POST",
+  });
+}
+
+export interface SessionDetails {
+  session: Session;
+  violations: Violation[];
+  answerAnalyses: AnalysisResult[];
 }
