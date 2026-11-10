@@ -16,7 +16,7 @@ Enrollment requires explicit candidate consent. The server processes the submitt
 
 ## Spoken and typed answer review
 
-At the start of an interview, candidates choose writing or speaking mode and are asked once whether to consent to answer processing. Writing-mode candidates may decline and continue, but answers are not saved for AI review in that case. Speaking mode requires consent because recordings are sent to the local Whisper service for transcription. With consent, the answer or transcript is sent to the configured provider for an experimental estimate and saved for the interviewer for up to 7 days; raw answer audio is not saved. Copy and paste are enabled for testing and do not create proctoring violations. Paste-event metadata and answer entry method are not sent to the model provider and do not identify the text's source.
+At the start of an interview, candidates choose writing or speaking mode and are asked once whether to consent to answer processing. Writing-mode candidates may decline and continue, but answers are not saved for AI review in that case. Speaking mode requires consent because recordings are sent to the local Whisper service for transcription. With consent, the answer or transcript is sent to the configured provider for an experimental estimate and saved for the interviewer for up to 7 days; raw answer audio is not saved. Copying from and pasting into the interview page are blocked and recorded as review signals. Paste-event metadata and answer entry method are not sent to the model provider and do not identify the text's source.
 
 Install Python 3.9 or later. From `Server`, create and activate a virtual environment and install the transcription dependencies:
 

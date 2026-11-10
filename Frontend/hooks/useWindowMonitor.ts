@@ -21,6 +21,8 @@ export function useWindowMonitor(enabled: boolean, onViolation: Emit) {
       window: createSignalGate(0, DETECT.cooldownMs),
       fullscreen: createSignalGate(0, DETECT.cooldownMs),
       contextmenu: createSignalGate(0, DETECT.cooldownMs),
+      copy: createSignalGate(0, DETECT.cooldownMs),
+      paste: createSignalGate(0, DETECT.cooldownMs),
     };
     let sawFullscreen = Boolean(document.fullscreenElement);
 
@@ -49,17 +51,29 @@ export function useWindowMonitor(enabled: boolean, onViolation: Emit) {
       event.preventDefault();
       emit("contextmenu", "Right-click blocked");
     };
+    const onCopy = (event: ClipboardEvent) => {
+      event.preventDefault();
+      emit("copy", "Copying from the interview page was blocked");
+    };
+    const onPaste = (event: ClipboardEvent) => {
+      event.preventDefault();
+      emit("paste", "Pasting into the interview page was blocked");
+    };
 
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("blur", onBlur);
     document.addEventListener("fullscreenchange", onFullscreen);
     document.addEventListener("contextmenu", onContext);
+    document.addEventListener("copy", onCopy);
+    document.addEventListener("paste", onPaste);
 
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("fullscreenchange", onFullscreen);
       document.removeEventListener("contextmenu", onContext);
+      document.removeEventListener("copy", onCopy);
+      document.removeEventListener("paste", onPaste);
     };
   }, [enabled]);
 }

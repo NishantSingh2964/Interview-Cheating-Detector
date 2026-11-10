@@ -111,7 +111,7 @@ export function QuestionPanel({
         {answerMode === "writing" ? (
           <>
             <label htmlFor="answer-transcript" style={{ fontSize: "11px", color: "var(--text-muted)" }}>
-              Type or paste your answer
+              Type your answer
             </label>
             <textarea
               id="answer-transcript"
