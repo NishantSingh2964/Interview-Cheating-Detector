@@ -11,6 +11,8 @@ The system consists of two main portals:
 
 The application uses Next.js for the frontend, Node.js for backend services, and Socket.IO for real-time communication between the candidate and admin portals.
 
+![Landing Page](Frontend/lib/Landing.png)
+
 ## Key Features
 
 ### 1. Tab Switching & Window Minimize Detection
@@ -48,6 +50,8 @@ The application uses Next.js for the frontend, Node.js for backend services, and
 - Flags responses when the estimated AI/agent-generated score is **60% or higher**.
 - Helps administrators identify potentially suspicious responses, including cases where candidates may be reading AI-generated answers.
 
+![Candidate Portal](Frontend/lib/Candidate.png)
+
 ## Admin Dashboard
 
 The admin portal provides a centralized interface for monitoring candidates and reviewing suspicious activities.
@@ -62,6 +66,8 @@ The admin portal provides a centralized interface for monitoring candidates and 
 - AI-based response analysis with percentage scores.
 - Identification of responses flagged by the AI detection system.
 - Centralized view of candidate violations and response information.
+
+ ![Admin Panel](Frontend/lib/Admin.png)
 
 ## Technology Stack
 
