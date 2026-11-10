@@ -5,13 +5,17 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "dev": "nodemon src/index.js",
+    "setup-voice-model": "node scripts/setup-voice-model.js",
+    "calibrate-voice": "node scripts/calibrate-voice.js",
+    "test": "node --test"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "mongoose": "^8.9.5",
+    "sherpa-onnx-node": "^2.0.1",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {

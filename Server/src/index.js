@@ -38,6 +38,7 @@ async function main() {
   const server = http.createServer(app);
 
   const io = new SocketServer(server, {
+    maxHttpBufferSize: 1_100_000,
     cors: {
       origin: CLIENT_URL,
       methods: ["GET", "POST"],

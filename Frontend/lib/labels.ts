@@ -13,4 +13,5 @@ export const VIOLATION_LABELS: Record<ViolationType, string> = {
   contextmenu: "Right-click",
   sound: "Sound",
   heartbeat_lost: "Heartbeat lost",
+  other_voice: "Voice difference (review)",
 };

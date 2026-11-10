@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { endSession, getSession, getQuestions } from "@/lib/api";
+import { endSession, enrollVoice, getSession, getQuestions } from "@/lib/api";
 import { FALLBACK_QUESTIONS } from "@/lib/questions";
 import { HEARTBEAT_MS } from "@/lib/config";
+import { VIOLATION_LABELS } from "@/lib/labels";
 import type { Decision, Question, Violation, ViolationReport } from "@/lib/types";
 
 import { useFaceMonitor } from "@/hooks/useFaceMonitor";
+import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { useWindowMonitor } from "@/hooks/useWindowMonitor";
 import { useSoundMonitor } from "@/hooks/useSoundMonitor";
 import { useObjectDetect } from "@/hooks/useObjectDetect";
@@ -17,7 +19,19 @@ import { CameraView } from "@/components/CameraView";
 import { QuestionPanel } from "@/components/QuestionPanel";
 import { ViolationLog } from "@/components/ViolationLog";
 
-type Stage = "permission" | "active" | "terminated" | "ended" | "error";
+type Stage = "enrollment" | "enrolling" | "permission" | "active" | "terminated" | "ended" | "error";
+type ViolationToast = { id: number; message: string };
+const VOICE_ENROLLMENT_PROMPTS = [
+  "I am ready to begin my interview and will answer each question in my own words.",
+  "I am speaking at a comfortable pace and using my normal speaking voice.",
+  "A clear voice sample helps the interview system recognize my voice during this session.",
+];
+const MIN_VOICE_CLIP_SAMPLES = 16000 * 3;
+const MAX_LIVE_VOICE_CLIP_SAMPLES = 16000 * 15;
+
+function violationKey(type: string, reason: string, time: string) {
+  return `${type}|${reason}|${new Date(time).getTime()}`;
+}
 
 interface Props {
   sessionId: string;
@@ -31,6 +45,7 @@ export function InterviewClient({ sessionId }: Props) {
   const [questionIdx, setQuestionIdx] = useState(0);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [localViolations, setLocalViolations] = useState<Violation[]>([]);
+  const [violationToasts, setViolationToasts] = useState<ViolationToast[]>([]);
   const [decision, setDecision] = useState<Decision | null>(null);
   const [warnBanner, setWarnBanner] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -39,10 +54,29 @@ export function InterviewClient({ sessionId }: Props) {
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
   const [endError, setEndError] = useState<string | null>(null);
+  const [voiceConsent, setVoiceConsent] = useState(false);
+  const [voiceClips, setVoiceClips] = useState<Float32Array[]>([]);
+  const [voiceEnrolled, setVoiceEnrolled] = useState(false);
+  const [voiceComparisonEnabled, setVoiceComparisonEnabled] = useState<boolean | null>(null);
+  const [voiceEnrollmentError, setVoiceEnrollmentError] = useState<string | null>(null);
+  const [voiceEnrollmentSaving, setVoiceEnrollmentSaving] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const pendingServerViolationKeysRef = useRef(new Set<string>());
+  const nextToastIdRef = useRef(0);
+  const toastTimersRef = useRef(new Map<number, ReturnType<typeof setTimeout>>());
   const active = stage === "active";
+
+  const addViolationToast = useCallback((message: string) => {
+    const id = ++nextToastIdRef.current;
+    setViolationToasts((current) => [...current, { id, message }]);
+    const timer = setTimeout(() => {
+      setViolationToasts((current) => current.filter((toast) => toast.id !== id));
+      toastTimersRef.current.delete(id);
+    }, 5000);
+    toastTimersRef.current.set(id, timer);
+  }, []);
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -58,8 +92,11 @@ export function InterviewClient({ sessionId }: Props) {
       .then(({ session }) => {
         if (cancelled) return;
         setCandidateName(session.candidateName);
+        setVoiceEnrolled(session.voiceEnrolled);
         if (session.status === "terminated" || session.status === "ended") {
           setStage(session.status);
+        } else {
+          setStage(session.voiceEnrolled ? "permission" : "enrollment");
         }
       })
       .catch((error) => {
@@ -80,6 +117,11 @@ export function InterviewClient({ sessionId }: Props) {
     streamRef.current = null;
   }, []);
 
+  useEffect(() => () => {
+    for (const timer of toastTimersRef.current.values()) clearTimeout(timer);
+    toastTimersRef.current.clear();
+  }, []);
+
   // ── Violation emitter ────────────────────────────────────────
   const reportRef = useRef<((p: ViolationReport) => boolean) | null>(null);
 
@@ -91,6 +133,8 @@ export function InterviewClient({ sessionId }: Props) {
         time: new Date().toISOString(),
         ...partial,
       };
+      pendingServerViolationKeysRef.current.add(violationKey(report.type, report.reason, report.time));
+      addViolationToast(`${VIOLATION_LABELS[report.type]}: ${report.reason}`);
       const sent = reportRef.current?.(report) ?? false;
       console.info("[proctor] violation recorded", {
         type: report.type,
@@ -111,10 +155,17 @@ export function InterviewClient({ sessionId }: Props) {
       ]);
       if (!sent) console.warn("[proctor] offline — violation queued locally:", report.type);
     },
-    [sessionId, questionIdx],
+    [addViolationToast, sessionId, questionIdx],
   );
 
   // ── Socket ───────────────────────────────────────────────────
+  const handleServerViolation = useCallback((violation: Violation) => {
+    const key = violationKey(violation.type, violation.reason, violation.time);
+    if (pendingServerViolationKeysRef.current.delete(key)) return;
+    addViolationToast(`${VIOLATION_LABELS[violation.type]}: ${violation.reason}`);
+    setLocalViolations((current) => [...current, violation]);
+  }, [addViolationToast]);
+
   const handleDecision = useCallback((d: Decision) => {
     setDecision(d);
     if (d.action === "terminate") {
@@ -145,16 +196,83 @@ export function InterviewClient({ sessionId }: Props) {
     }
   }, [sessionId, stopCamera]);
 
-  const { connected, reportViolation, sendHeartbeat, sendQuestionChanged } = useProctorSocket({
+  const captureEnrollmentClip = useCallback((samples: Float32Array) => {
+    if (samples.length < MIN_VOICE_CLIP_SAMPLES) return;
+    setVoiceClips((current) => (
+      current.length >= VOICE_ENROLLMENT_PROMPTS.length
+        ? current
+        : [...current, Float32Array.from(samples)]
+    ));
+  }, []);
+
+  const startVoiceEnrollment = useCallback(async () => {
+    if (!voiceConsent) return;
+    setVoiceEnrollmentError(null);
+    setVoiceClips([]);
+    try {
+      const audioStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      streamRef.current = audioStream;
+      setStream(audioStream);
+      setStage("enrolling");
+    } catch (error) {
+      setVoiceEnrollmentError(
+        error instanceof DOMException && error.name === "NotAllowedError"
+          ? "Microphone permission was denied. Allow microphone access and try again."
+          : "Could not access the microphone for voice enrollment.",
+      );
+    }
+  }, [voiceConsent]);
+
+  const submitVoiceEnrollment = useCallback(async () => {
+    if (!voiceConsent || voiceClips.length !== VOICE_ENROLLMENT_PROMPTS.length) return;
+    setVoiceEnrollmentSaving(true);
+    setVoiceEnrollmentError(null);
+    try {
+      await enrollVoice(sessionId, voiceClips);
+      setVoiceEnrolled(true);
+      setVoiceClips([]);
+      setVoiceConsent(false);
+      stopCamera();
+      setStage("permission");
+    } catch (error) {
+      setVoiceEnrollmentError(
+        error instanceof Error ? error.message : "Could not create the voice reference.",
+      );
+    } finally {
+      setVoiceEnrollmentSaving(false);
+    }
+  }, [sessionId, stopCamera, voiceClips, voiceConsent]);
+
+  const { connected, reportViolation, sendHeartbeat, sendQuestionChanged, sendVoiceSegment } = useProctorSocket({
     role: "candidate",
     sessionId,
     enabled: active,
     onDecision: handleDecision,
+    onViolationAdded: handleServerViolation,
+    onVoiceDetectionStatus: setVoiceComparisonEnabled,
+    onVoiceSegmentRejected: (reason) => console.warn("[voice-monitor] server rejected speech segment:", reason),
     onRejected: (reason) => console.warn("[proctor] server rejected violation:", reason),
     onSessionClosed: handleSessionClosed,
   });
 
   useEffect(() => { reportRef.current = reportViolation; }, [reportViolation]);
+
+  const reportLiveVoiceSegment = useCallback((samples: Float32Array) => {
+    if (!voiceEnrolled || voiceComparisonEnabled !== true) return;
+    for (let offset = 0; offset + MIN_VOICE_CLIP_SAMPLES <= samples.length; offset += MAX_LIVE_VOICE_CLIP_SAMPLES) {
+      const end = Math.min(offset + MAX_LIVE_VOICE_CLIP_SAMPLES, samples.length);
+      if (end - offset < MIN_VOICE_CLIP_SAMPLES) continue;
+      const sent = sendVoiceSegment(sessionId, samples.slice(offset, end));
+      if (!sent) console.warn("[voice-monitor] speech segment was not sent because the server is disconnected.");
+    }
+  }, [sendVoiceSegment, sessionId, voiceComparisonEnabled, voiceEnrolled]);
 
   // ── Heartbeat ────────────────────────────────────────────────
   useEffect(() => {
@@ -173,6 +291,13 @@ export function InterviewClient({ sessionId }: Props) {
   const { status: faceStatus, faceCount } = useFaceMonitor(videoRef, active, emit);
   useWindowMonitor(active, emit);
   const { level: soundLevel } = useSoundMonitor(stream, active, emit);
+  const { status: voiceActivityStatus, speaking } = useVoiceActivity(
+    stream,
+    active || stage === "enrolling",
+    stage === "enrolling"
+      ? captureEnrollmentClip
+      : active && voiceEnrolled ? reportLiveVoiceSegment : undefined,
+  );
   const { status: objectStatus, boxes } = useObjectDetect(videoRef, active, emit);
 
   // ── Keyboard nav ─────────────────────────────────────────────
@@ -192,7 +317,12 @@ export function InterviewClient({ sessionId }: Props) {
     try {
       const s = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: true,
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       });
       streamRef.current = s;
       setStream(s);
@@ -206,7 +336,7 @@ export function InterviewClient({ sessionId }: Props) {
     }
   }, []);
 
-  const total = localViolations.length;
+  const total = localViolations.filter((violation) => violation.type !== "other_voice").length;
 
   if (sessionLoading) {
     return (
@@ -224,6 +354,109 @@ export function InterviewClient({ sessionId }: Props) {
           <p style={{ color: "var(--text-secondary)", fontSize: "14px", marginBottom: "28px" }}>{sessionError}</p>
           <button className="btn btn-ghost" style={{ width: "100%" }} onClick={() => router.replace("/")}>
             Return to Start
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (stage === "enrollment" || stage === "enrolling") {
+    const promptIndex = Math.min(voiceClips.length, VOICE_ENROLLMENT_PROMPTS.length - 1);
+    const clipsReady = voiceClips.length === VOICE_ENROLLMENT_PROMPTS.length;
+
+    return (
+      <div className="gradient-bg" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+        <div className="glass" style={{ maxWidth: "540px", width: "100%", padding: "40px" }}>
+          <div style={{ fontSize: "42px", textAlign: "center", marginBottom: "16px" }}>🎙️</div>
+          <h2 style={{ fontFamily: "var(--font-display)", fontSize: "22px", textAlign: "center", margin: "0 0 12px" }}>
+            Voice enrollment
+          </h2>
+          <p style={{ color: "var(--text-secondary)", fontSize: "14px", lineHeight: 1.65 }}>
+            With your permission, three short speech samples are used to create a temporary voice reference for this interview.
+            The samples are processed to create the reference and are not saved as recordings. The reference is deleted when
+            the interview ends. Voice matching is an imperfect signal and should not be treated as proof of identity.
+          </p>
+
+          {voiceEnrollmentError && (
+            <div role="alert" style={{ padding: "12px 14px", borderRadius: "var(--radius-sm)", background: "var(--terminate-bg)", color: "var(--terminate)", fontSize: "13px", marginBottom: "16px" }}>
+              {voiceEnrollmentError}
+            </div>
+          )}
+
+          {stage === "enrollment" ? (
+            <>
+              <label style={{ display: "flex", gap: "10px", alignItems: "flex-start", color: "var(--text-secondary)", fontSize: "13px", lineHeight: 1.5, margin: "20px 0" }}>
+                <input
+                  type="checkbox"
+                  checked={voiceConsent}
+                  onChange={(event) => setVoiceConsent(event.target.checked)}
+                  style={{ marginTop: "3px" }}
+                />
+                <span>I agree to create a session-only voice reference as described above.</span>
+              </label>
+              <button
+                className="btn btn-primary btn-lg"
+                disabled={!voiceConsent}
+                onClick={() => { void startVoiceEnrollment(); }}
+                style={{ width: "100%", marginBottom: "10px" }}
+              >
+                Start voice enrollment
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="glass" style={{ padding: "18px", margin: "20px 0" }}>
+                <div style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "8px" }}>
+                  Sample {Math.min(voiceClips.length + 1, VOICE_ENROLLMENT_PROMPTS.length)} of {VOICE_ENROLLMENT_PROMPTS.length}
+                </div>
+                <p style={{ margin: 0, fontSize: "15px", lineHeight: 1.6 }}>
+                  {clipsReady ? "All three speech samples captured." : VOICE_ENROLLMENT_PROMPTS[promptIndex]}
+                </p>
+                <p aria-live="polite" style={{ margin: "10px 0 0", color: speaking ? "var(--ok)" : "var(--text-muted)", fontSize: "12px" }}>
+                  {speaking ? "Speech detected — finish the sentence, then pause." : `${voiceClips.length} of 3 samples captured. Each needs about 3 seconds of speech.`}
+                </p>
+              </div>
+              {voiceActivityStatus === "loading" && (
+                <p role="status" style={{ color: "var(--text-muted)", fontSize: "13px" }}>Starting speech detection…</p>
+              )}
+              {voiceActivityStatus === "unavailable" && (
+                <p role="alert" style={{ color: "var(--terminate)", fontSize: "13px" }}>Speech detection could not start. Return and try again.</p>
+              )}
+              <button
+                className="btn btn-primary btn-lg"
+                disabled={!clipsReady || voiceEnrollmentSaving || voiceActivityStatus !== "ready"}
+                onClick={() => { void submitVoiceEnrollment(); }}
+                style={{ width: "100%", marginBottom: "10px" }}
+              >
+                {voiceEnrollmentSaving ? "Creating voice reference…" : "Save voice reference"}
+              </button>
+              <button
+                className="btn btn-ghost"
+                disabled={voiceEnrollmentSaving}
+                onClick={() => {
+                  setVoiceClips([]);
+                  setVoiceEnrollmentError(null);
+                }}
+                style={{ width: "100%", marginBottom: "10px" }}
+              >
+                Retake samples
+              </button>
+            </>
+          )}
+
+          <button
+            className="btn btn-ghost"
+            disabled={voiceEnrollmentSaving}
+            onClick={() => {
+              stopCamera();
+              setVoiceClips([]);
+              setVoiceConsent(false);
+              setVoiceEnrollmentError(null);
+              setStage("permission");
+            }}
+            style={{ width: "100%" }}
+          >
+            Skip voice enrollment
           </button>
         </div>
       </div>
@@ -321,6 +554,15 @@ export function InterviewClient({ sessionId }: Props) {
         </div>
       </header>
 
+      <div className="violation-toast-container" aria-live="polite" aria-atomic="false">
+        {violationToasts.map((toast) => (
+          <div className="violation-toast" key={toast.id} role="status">
+            <span aria-hidden="true">⚠</span>
+            <span>{toast.message}</span>
+          </div>
+        ))}
+      </div>
+
       {/* Warning banner */}
       {warnBanner && (
         <div style={{ background: "var(--warn-bg)", borderBottom: "1px solid rgba(245,158,11,0.35)", padding: "10px 24px", display: "flex", alignItems: "center", gap: "10px" }}>
@@ -339,6 +581,10 @@ export function InterviewClient({ sessionId }: Props) {
             faceCount={faceCount}
             faceStatus={faceStatus}
             objectStatus={objectStatus}
+            voiceActivityStatus={voiceActivityStatus}
+            voiceEnrolled={voiceEnrolled}
+            voiceComparisonEnabled={voiceComparisonEnabled}
+            speaking={speaking}
             soundLevel={soundLevel}
             boxes={boxes}
           />

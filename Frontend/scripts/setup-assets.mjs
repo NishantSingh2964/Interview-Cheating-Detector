@@ -32,6 +32,22 @@ if (existsSync(mediaSrc)) {
   console.warn("@mediapipe/tasks-vision is not installed; face detection cannot load.");
 }
 
+const vadSrc = path.join(root, "node_modules", "@ricky0123", "vad-web", "dist");
+const vadDest = path.join(root, "public", "vad");
+if (existsSync(vadSrc)) {
+  mkdirSync(vadDest, { recursive: true });
+  for (const name of ["vad.worklet.bundle.min.js", "silero_vad_v5.onnx"]) {
+    const source = path.join(vadSrc, name);
+    if (!existsSync(source)) {
+      throw new Error(`Required VAD asset is missing: ${source}`);
+    }
+    copyFileSync(source, path.join(vadDest, name));
+  }
+  console.log("Copied Silero VAD assets to public/vad");
+} else {
+  console.warn("@ricky0123/vad-web is not installed; speech activity detection cannot load.");
+}
+
 const modelDest = path.join(root, "public", "models", "face_landmarker.task");
 mkdirSync(path.dirname(modelDest), { recursive: true });
 if (!existsSync(modelDest)) {

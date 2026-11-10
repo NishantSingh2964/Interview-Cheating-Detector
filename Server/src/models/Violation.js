@@ -13,6 +13,7 @@ const VIOLATION_TYPES = [
   "contextmenu",
   "sound",
   "heartbeat_lost",
+  "other_voice",
 ];
 
 const violationSchema = new mongoose.Schema(

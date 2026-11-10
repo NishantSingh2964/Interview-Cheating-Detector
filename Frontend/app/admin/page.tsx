@@ -19,6 +19,13 @@ const STATUS_LABEL: Record<SessionStatus, string> = {
   ended: "Ended",
 };
 
+function getSessionStatusLabel(session: Session) {
+  if (session.status === "ended" && session.endReason === "heartbeat_timeout") {
+    return "Ended · Connection lost";
+  }
+  return STATUS_LABEL[session.status];
+}
+
 function timeAgo(iso: string) {
   const diffMs = Date.now() - new Date(iso).getTime();
   const m = Math.floor(diffMs / 60000);
@@ -35,9 +42,9 @@ const TYPE_ICONS: Record<string, string> = {
   no_face: "👤", multiple_faces: "👥", looking_away: "👀",
   object_detected: "📱", multiple_persons: "🧑‍🤝‍🧑",
   window: "🪟", fullscreen: "⛶", copy: "📋", paste: "📌",
-  contextmenu: "🖱", sound: "🔊", heartbeat_lost: "💔",
+  contextmenu: "🖱", sound: "🔊", heartbeat_lost: "💔", other_voice: "🎙️",
 };
-const AMBER_TYPES = new Set(["window", "fullscreen", "copy", "paste", "contextmenu", "sound"]);
+const AMBER_TYPES = new Set(["window", "fullscreen", "copy", "paste", "contextmenu", "sound", "other_voice"]);
 
 export default function AdminPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -68,9 +75,11 @@ export default function AdminPage() {
       ...prev.slice(0, 49),
     ]);
     // Update local violation count for the session
-    setSessions((prev) =>
-      prev.map((s) => s._id === v.sessionId ? { ...s, violationCount: s.violationCount + 1 } : s)
-    );
+    if (v.type !== "other_voice") {
+      setSessions((prev) =>
+        prev.map((s) => s._id === v.sessionId ? { ...s, violationCount: s.violationCount + 1 } : s)
+      );
+    }
   }, [sessions]);
 
   const { connected } = useProctorSocket({
@@ -178,9 +187,12 @@ export default function AdminPage() {
         {/* Live feed sidebar */}
         <aside style={{ borderLeft: "1px solid var(--border)", padding: "24px", minHeight: "calc(100vh - 65px)", position: "sticky", top: "65px", overflowY: "auto", maxHeight: "calc(100vh - 65px)" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
-            <h3 style={{ margin: 0, fontSize: "14px", fontWeight: 700 }}>Live Violations</h3>
+            <h3 style={{ margin: 0, fontSize: "14px", fontWeight: 700 }}>Live Events</h3>
             <span className="badge badge-muted" style={{ fontFamily: "var(--font-mono)" }}>{liveViolations.length}</span>
           </div>
+          <p style={{ margin: "-8px 0 14px", color: "var(--text-muted)", fontSize: "11px", lineHeight: 1.5 }}>
+            Voice-difference events are review signals only; they do not count toward the violation total.
+          </p>
 
           {liveViolations.length === 0 ? (
             <div style={{ textAlign: "center", padding: "48px 12px", color: "var(--text-muted)" }}>
@@ -199,6 +211,9 @@ export default function AdminPage() {
                         <span style={{ fontWeight: 600, fontSize: "12px", color: amber ? "var(--warn)" : "var(--terminate)" }}>
                           {VIOLATION_LABELS[v.type] ?? v.type}
                         </span>
+                        {v.type === "other_voice" && (
+                          <span className="badge badge-warn" style={{ fontSize: "9px", padding: "2px 5px" }}>REVIEW ONLY</span>
+                        )}
                       </div>
                       {v.sessionName && (
                         <span style={{ fontSize: "11px", color: "var(--accent-1)" }}>{v.sessionName}</span>
@@ -247,7 +262,7 @@ function SessionCard({ session, isExpanded, expandedViolations, loading, onToggl
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
-          <span className={`badge ${statusClass}`}>{STATUS_LABEL[session.status]}</span>
+          <span className={`badge ${statusClass}`}>{getSessionStatusLabel(session)}</span>
           <span className={`badge ${session.violationCount === 0 ? "badge-ok" : session.violationCount >= 5 ? "badge-error" : session.violationCount >= 3 ? "badge-warn" : "badge-muted"}`}>
             {session.violationCount} 🚨
           </span>
@@ -280,7 +295,7 @@ function SessionCard({ session, isExpanded, expandedViolations, loading, onToggl
               <div className="spinner" />
             </div>
           ) : expandedViolations.length === 0 ? (
-            <p style={{ color: "var(--text-muted)", fontSize: "13px", margin: 0, textAlign: "center", padding: "20px" }}>No violations recorded.</p>
+            <p style={{ color: "var(--text-muted)", fontSize: "13px", margin: 0, textAlign: "center", padding: "20px" }}>No events recorded.</p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "280px", overflowY: "auto" }}>
               {expandedViolations.map((v, i) => (
@@ -291,6 +306,9 @@ function SessionCard({ session, isExpanded, expandedViolations, loading, onToggl
                       <span style={{ fontWeight: 600, fontSize: "12px", color: amber.has(v.type) ? "var(--warn)" : "var(--terminate)" }}>
                         {VIOLATION_LABELS[v.type] ?? v.type}
                       </span>
+                      {v.type === "other_voice" && (
+                        <span className="badge badge-warn" style={{ fontSize: "9px", padding: "2px 5px" }}>REVIEW ONLY</span>
+                      )}
                       <span style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "var(--text-muted)" }}>
                         Q{v.question} · {formatTime(v.time)}
                       </span>

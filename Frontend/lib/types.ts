@@ -11,6 +11,7 @@ export const VIOLATION_TYPES = [
   "contextmenu",
   "sound",
   "heartbeat_lost",
+  "other_voice",
 ] as const;
 
 export type ViolationType = (typeof VIOLATION_TYPES)[number];
@@ -18,6 +19,7 @@ export type ViolationType = (typeof VIOLATION_TYPES)[number];
 export type DecisionAction = "ok" | "warn" | "terminate";
 
 export type SessionStatus = "active" | "terminated" | "ended";
+export type SessionEndReason = "submitted" | "heartbeat_timeout" | "violation_limit";
 
 export interface Question {
   id: number;
@@ -29,8 +31,10 @@ export interface Session {
   _id: string;
   candidateName: string;
   status: SessionStatus;
+  endReason?: SessionEndReason | null;
   currentQuestion: number;
   violationCount: number;
+  voiceEnrolled: boolean;
   startedAt: string;
   endedAt: string | null;
   lastHeartbeat: string | null;

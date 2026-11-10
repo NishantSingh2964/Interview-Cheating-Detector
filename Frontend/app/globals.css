@@ -253,6 +253,39 @@ h1, h2, h3, h4 {
 .overlay-warn      { background: rgba(217, 119, 6, 0.08); backdrop-filter: blur(8px); }
 .overlay-terminate { background: rgba(30, 20, 20, 0.80);  backdrop-filter: blur(12px); }
 
+.violation-toast-container {
+  position: fixed;
+  top: 76px;
+  right: 20px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.violation-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  color: var(--warn);
+  background: var(--bg-card);
+  border: 1px solid rgba(217, 119, 6, 0.3);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevate);
+  font-size: 13px;
+  line-height: 1.45;
+  animation: toast-enter 180ms ease-out;
+}
+
+@keyframes toast-enter {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
 @keyframes fadeIn {
   from { opacity: 0; }
   to   { opacity: 1; }

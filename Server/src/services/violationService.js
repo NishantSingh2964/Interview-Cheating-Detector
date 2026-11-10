@@ -1,6 +1,6 @@
 const Session = require("../models/Session");
 const Violation = require("../models/Violation");
-const { WARN_AT, TERMINATE_AT } = require("../config/rules");
+const { WARN_AT, TERMINATE_AT, TERMINATION_ENABLED } = require("../config/rules");
 
 const VALID_TYPES = new Set([
   "no_face",
@@ -15,6 +15,7 @@ const VALID_TYPES = new Set([
   "contextmenu",
   "sound",
   "heartbeat_lost",
+  "other_voice",
 ]);
 
 /**
@@ -37,7 +38,8 @@ async function processViolation(payload) {
   }
 
   // ── Find session ────────────────────────────────────────────
-  const session = await Session.findById(sessionId);
+  const session = await Session.findById(sessionId)
+    .select("+voiceprint +voiceConsentAt +voiceConsentVersion");
   if (!session) {
     return { rejected: true, reason: "Session not found" };
   }
@@ -55,22 +57,32 @@ async function processViolation(payload) {
     time: time ? new Date(time) : new Date(),
   });
 
-  // ── Update session count ────────────────────────────────────
-  session.violationCount += 1;
+  // Other-voice matches are review signals, not disciplinary violations.
+  const isReviewSignal = type === "other_voice";
+  if (!isReviewSignal) session.violationCount += 1;
   const count = session.violationCount;
 
   // ── Decide ──────────────────────────────────────────────────
   let action = "ok";
   let message = "";
 
-  if (count >= TERMINATE_AT) {
+  if (isReviewSignal) {
+    message = "A voice difference was flagged for human review. It is not proof of identity.";
+  } else if (TERMINATION_ENABLED && count >= TERMINATE_AT) {
     action = "terminate";
     message = `Session terminated — ${count} violations reached the limit.`;
     session.status = "terminated";
     session.endedAt = new Date();
+    session.endReason = "violation_limit";
+    session.voiceEnrolled = false;
+    session.set("voiceprint", undefined);
+    session.set("voiceConsentAt", undefined);
+    session.set("voiceConsentVersion", undefined);
   } else if (count >= WARN_AT) {
     action = "warn";
-    message = `Warning: you have ${count} violations. At ${TERMINATE_AT} the session ends.`;
+    message = TERMINATION_ENABLED
+      ? `Warning: you have ${count} violations. At ${TERMINATE_AT} the session ends.`
+      : `Testing mode: session termination is disabled. Violation count: ${count}.`;
   }
 
   await session.save();

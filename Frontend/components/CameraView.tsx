@@ -5,6 +5,7 @@ import type { RefObject } from "react";
 import type { DetectionBox } from "@/lib/types";
 import type { FaceStatus } from "@/hooks/useFaceMonitor";
 import type { ObjectDetectStatus } from "@/hooks/useObjectDetect";
+import type { VoiceActivityStatus } from "@/hooks/useVoiceActivity";
 
 interface Props {
   videoRef: RefObject<HTMLVideoElement | null>;
@@ -12,6 +13,10 @@ interface Props {
   faceCount: number;
   faceStatus: FaceStatus;
   objectStatus: ObjectDetectStatus;
+  voiceActivityStatus: VoiceActivityStatus;
+  voiceEnrolled: boolean;
+  voiceComparisonEnabled: boolean | null;
+  speaking: boolean;
   soundLevel: number;       // 0–1 RMS
   boxes: DetectionBox[];    // YOLO bounding boxes
   mirrored?: boolean;
@@ -24,7 +29,7 @@ const STATUS_LABEL: Record<FaceStatus, string> = {
   error: "Model error",
 };
 
-export function CameraView({ videoRef, stream, faceCount, faceStatus, objectStatus, soundLevel, boxes, mirrored = true }: Props) {
+export function CameraView({ videoRef, stream, faceCount, faceStatus, objectStatus, voiceActivityStatus, voiceEnrolled, voiceComparisonEnabled, speaking, soundLevel, boxes, mirrored = true }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   /* Attach stream to video */
@@ -126,6 +131,20 @@ export function CameraView({ videoRef, stream, faceCount, faceStatus, objectStat
         {objectStatus === "ready" && "Object detection active"}
         {objectStatus === "unavailable" && "Object detection unavailable"}
       </p>
+
+      <p aria-live="polite" style={{ margin: 0, fontSize: "11px", color: voiceActivityStatus === "unavailable" ? "var(--terminate)" : speaking ? "var(--ok)" : "var(--text-muted)" }}>
+        {voiceActivityStatus === "loading" && "Loading speech detection…"}
+        {voiceActivityStatus === "ready" && (speaking ? "Speech detected" : "Speech detection active")}
+        {voiceActivityStatus === "unavailable" && "Speech detection unavailable"}
+      </p>
+
+      {voiceEnrolled && (
+        <p aria-live="polite" style={{ margin: 0, fontSize: "11px", color: voiceComparisonEnabled === false ? "var(--warn)" : "var(--text-muted)" }}>
+          {voiceComparisonEnabled === null && "Checking speaker comparison…"}
+          {voiceComparisonEnabled === true && "Speaker comparison active (review signal only)"}
+          {voiceComparisonEnabled === false && "Speaker comparison unavailable — server needs configuration"}
+        </p>
+      )}
 
       {/* Sound level meter */}
       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>

@@ -8,11 +8,20 @@ const sessionSchema = new mongoose.Schema(
       enum: ["active", "terminated", "ended"],
       default: "active",
     },
+    endReason: {
+      type: String,
+      enum: ["submitted", "heartbeat_timeout", "violation_limit"],
+      default: null,
+    },
     currentQuestion: { type: Number, default: 1 },
     violationCount: { type: Number, default: 0 },
+    voiceEnrolled: { type: Boolean, default: false },
+    voiceprint: { type: [Number], select: false },
+    voiceConsentAt: { type: Date, select: false },
+    voiceConsentVersion: { type: String, select: false },
     startedAt: { type: Date, default: Date.now },
     endedAt: { type: Date, default: null },
-    lastHeartbeat: { type: Date, default: Date.now },
+    lastHeartbeat: { type: Date, default: null },
   },
   { timestamps: false }
 );

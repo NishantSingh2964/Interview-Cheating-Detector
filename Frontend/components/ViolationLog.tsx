@@ -8,7 +8,7 @@ interface Props {
   totalCount: number;
 }
 
-const AMBER_TYPES = new Set(["window", "fullscreen", "copy", "paste", "contextmenu", "sound"]);
+const AMBER_TYPES = new Set(["window", "fullscreen", "copy", "paste", "contextmenu", "sound", "other_voice"]);
 
 const TYPE_ICONS: Partial<Record<string, string>> = {
   no_face: "👤",
@@ -23,6 +23,7 @@ const TYPE_ICONS: Partial<Record<string, string>> = {
   contextmenu: "🖱",
   sound: "🔊",
   heartbeat_lost: "💔",
+  other_voice: "🎙️",
 };
 
 function timeago(iso: string) {

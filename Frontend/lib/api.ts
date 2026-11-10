@@ -57,6 +57,34 @@ export function endSession(id: string) {
   });
 }
 
+export async function enrollVoice(id: string, clips: Float32Array[]) {
+  const clipLengths = clips.map((clip) => clip.length);
+  const totalSamples = clipLengths.reduce((sum, length) => sum + length, 0);
+  const combined = new Float32Array(totalSamples);
+  let offset = 0;
+  for (const clip of clips) {
+    combined.set(clip, offset);
+    offset += clip.length;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${SERVER_URL}/api/sessions/${id}/enroll-voice`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Voice-Consent": "session-voiceprint-v1",
+        "X-Voice-Clip-Lengths": clipLengths.join(","),
+      },
+      body: combined.buffer,
+    });
+  } catch {
+    throw new ApiError("The interview server is not reachable.");
+  }
+  if (!response.ok) throw new ApiError(await readError(response), response.status);
+  return (await response.json()) as { voiceEnrolled: boolean };
+}
+
 export async function getQuestions() {
   const data = await request<Question[] | { questions: Question[] }>("/api/questions");
   if (Array.isArray(data)) return data;
