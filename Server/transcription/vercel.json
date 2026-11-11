@@ -2,8 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "app.py": {
-      "maxDuration": 300,
-      "excludeFiles": "{**/onnxruntime/**,**/onnxruntime-*.dist-info/**,**/silero_vad_v6.onnx}"
+      "maxDuration": 300
     }
   }
 }
