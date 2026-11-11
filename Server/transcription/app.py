@@ -1,4 +1,5 @@
 import hmac
+import logging
 import os
 import tempfile
 import threading
@@ -28,6 +29,7 @@ FILE_SUFFIXES = {
 }
 
 app = FastAPI(docs_url=None, redoc_url=None)
+logger = logging.getLogger(__name__)
 model = None
 model_lock = threading.Lock()
 
@@ -84,7 +86,7 @@ async def transcribe(request: Request):
         transcript = await run_in_threadpool(transcribe_file, filename)
         return {"text": transcript}
     except Exception as error:
-        print(f"[whisper] transcription failed: {error}", flush=True)
+        logger.exception("[whisper] transcription failed")
         raise HTTPException(status_code=500, detail="Whisper could not transcribe this recording.") from error
     finally:
         if filename is not None:
