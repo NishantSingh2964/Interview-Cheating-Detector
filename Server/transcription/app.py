@@ -21,6 +21,7 @@ MODEL_PATH = Path(__file__).resolve().parent / "models" / MODEL_NAME
 MODEL_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 MODEL_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 WHISPER_API_KEY = os.getenv("WHISPER_API_KEY")
+VAD_FILTER_ENABLED = not IS_VERCEL
 
 FILE_SUFFIXES = {
     "audio/webm": ".webm",
@@ -54,7 +55,7 @@ def transcribe_file(filename: str) -> str:
         segments, _ = model.transcribe(
             filename,
             beam_size=5,
-            vad_filter=True,
+            vad_filter=VAD_FILTER_ENABLED,
         )
         return " ".join(segment.text.strip() for segment in segments).strip()
 
@@ -66,6 +67,7 @@ def health():
         "status": "ok" if bundled or not IS_VERCEL else "model_missing",
         "model": MODEL_NAME,
         "bundled": bundled,
+        "vad_filter": VAD_FILTER_ENABLED,
     }
 
 
