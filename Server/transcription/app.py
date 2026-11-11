@@ -16,7 +16,7 @@ if IS_VERCEL:
 from faster_whisper import WhisperModel
 
 MAX_AUDIO_BYTES = 4 * 1024 * 1024 if IS_VERCEL else 25 * 1024 * 1024
-MODEL_NAME = os.getenv("WHISPER_MODEL", "base.en")
+MODEL_NAME = os.getenv("WHISPER_MODEL", "tiny.en" if IS_VERCEL else "base.en")
 MODEL_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 MODEL_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 WHISPER_API_KEY = os.getenv("WHISPER_API_KEY")
