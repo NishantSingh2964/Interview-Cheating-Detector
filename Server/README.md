@@ -10,7 +10,13 @@ npm run setup-voice-model
 npm run dev
 ```
 
-The model is downloaded separately and ignored by Git; the server returns `503` from enrollment if it is missing. Production deployments must also provide the model file and a runtime compatible with `sherpa-onnx-node`'s native binaries. Deployment packaging has not been validated yet.
+The model is downloaded separately and ignored by Git; the server returns `503` from enrollment if it is missing.
+
+### Deploying the backend to Vercel
+
+Configure the Vercel backend project with `Server` as its Root Directory and leave dependency installation enabled. Its default Build Command (`npm run build`) runs `npm run setup-voice-model`, downloading the model into `Server/models/` during each deployment build. The model stays out of Git. Do not override the Build Command with `npm install` or `npm run start`; either would skip model setup or start the server during the build.
+
+After deployment, check the build log for `Downloaded English CAM++ speaker embedding model` (or `Speaker embedding model already exists`). Then test voice enrollment against the deployed backend. The model must be present in the deployed function at runtime, and `sherpa-onnx-node`'s native binaries must be compatible with Vercel's Node.js runtime. If the build succeeds but enrollment still reports the model missing, verify Vercel included `models/wespeaker_en_voxceleb_CAM++_LM.onnx` in the function bundle; a build-time download alone does not guarantee runtime file tracing.
 
 Enrollment requires explicit candidate consent. The server processes the submitted clips in memory and stores only a session voiceprint; ending the interview clears the voiceprint and consent metadata. Raw audio clips are not persisted.
 
