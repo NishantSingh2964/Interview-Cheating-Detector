@@ -16,7 +16,8 @@ if IS_VERCEL:
 from faster_whisper import WhisperModel
 
 MAX_AUDIO_BYTES = 4 * 1024 * 1024 if IS_VERCEL else 25 * 1024 * 1024
-MODEL_NAME = os.getenv("WHISPER_MODEL", "tiny.en" if IS_VERCEL else "base.en")
+MODEL_NAME = os.getenv("WHISPER_MODEL", "base.en")
+MODEL_PATH = Path(__file__).resolve().parent / "models" / MODEL_NAME
 MODEL_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 MODEL_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 WHISPER_API_KEY = os.getenv("WHISPER_API_KEY")
@@ -39,8 +40,14 @@ def transcribe_file(filename: str) -> str:
     global model
     with model_lock:
         if model is None:
+            if IS_VERCEL and not (MODEL_PATH / "model.bin").is_file():
+                raise RuntimeError(
+                    f"Whisper model {MODEL_NAME!r} is not bundled with this deployment. "
+                    "Check the Vercel build log for the model download step."
+                )
+            model_source = str(MODEL_PATH) if (MODEL_PATH / "model.bin").is_file() else MODEL_NAME
             model = WhisperModel(
-                MODEL_NAME,
+                model_source,
                 device=MODEL_DEVICE,
                 compute_type=MODEL_COMPUTE_TYPE,
             )
@@ -54,7 +61,12 @@ def transcribe_file(filename: str) -> str:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL_NAME}
+    bundled = (MODEL_PATH / "model.bin").is_file()
+    return {
+        "status": "ok" if bundled or not IS_VERCEL else "model_missing",
+        "model": MODEL_NAME,
+        "bundled": bundled,
+    }
 
 
 @app.post("/transcribe")
