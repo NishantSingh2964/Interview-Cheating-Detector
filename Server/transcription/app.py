@@ -11,6 +11,7 @@ from starlette.concurrency import run_in_threadpool
 IS_VERCEL = os.getenv("VERCEL") == "1"
 if IS_VERCEL:
     os.environ.setdefault("HF_HOME", "/tmp/huggingface")
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
 
 from faster_whisper import WhisperModel
 
