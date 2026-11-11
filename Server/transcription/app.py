@@ -1,3 +1,4 @@
+import hmac
 import os
 import tempfile
 import threading
@@ -5,12 +6,18 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
+
+IS_VERCEL = os.getenv("VERCEL") == "1"
+if IS_VERCEL:
+    os.environ.setdefault("HF_HOME", "/tmp/huggingface")
+
 from faster_whisper import WhisperModel
 
-MAX_AUDIO_BYTES = 25 * 1024 * 1024
+MAX_AUDIO_BYTES = 4 * 1024 * 1024 if IS_VERCEL else 25 * 1024 * 1024
 MODEL_NAME = os.getenv("WHISPER_MODEL", "base.en")
 MODEL_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 MODEL_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+WHISPER_API_KEY = os.getenv("WHISPER_API_KEY")
 
 FILE_SUFFIXES = {
     "audio/webm": ".webm",
@@ -49,6 +56,15 @@ def health():
 
 @app.post("/transcribe")
 async def transcribe(request: Request):
+    if IS_VERCEL and not WHISPER_API_KEY:
+        raise HTTPException(status_code=503, detail="Whisper service authentication is not configured.")
+
+    if WHISPER_API_KEY:
+        expected = f"Bearer {WHISPER_API_KEY}"
+        provided = request.headers.get("authorization", "")
+        if not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
+            raise HTTPException(status_code=401, detail="Invalid transcription service credentials.")
+
     content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     suffix = FILE_SUFFIXES.get(content_type)
     if suffix is None:

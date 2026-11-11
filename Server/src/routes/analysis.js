@@ -63,7 +63,7 @@ router.post(
         return res.status(error.statusCode).json({ message: error.message });
       }
       console.error("[analysis] transcription failed:", error);
-      res.status(502).json({ message: "Transcription failed. Check that the local Whisper service is running, then retry." });
+      res.status(502).json({ message: "Transcription failed. Check the configured Whisper service, then retry." });
     }
   },
 );

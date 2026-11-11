@@ -105,7 +105,7 @@ export function QuestionPanel({
           <p style={{ margin: 0, color: "var(--text-muted)", fontSize: "11px", lineHeight: 1.5 }}>
             {answerMode === "writing"
               ? "Type your answer below. Clicking Next saves it and queues an experimental AI-likeness estimate if you opted in at the start."
-              : "Record your answer and review its local Whisper transcript before clicking Next. With your opt-in, the transcript is saved and queued for an experimental AI-likeness estimate."}
+              : "Record your answer and review its Whisper transcript before clicking Next. With your opt-in, the transcript is saved and queued for an experimental AI-likeness estimate."}
           </p>
         </div>
         {answerMode === "writing" ? (
@@ -132,7 +132,7 @@ export function QuestionPanel({
         ) : (
           <>
             <p style={{ margin: 0, color: "var(--text-muted)", fontSize: "11px", lineHeight: 1.5 }}>
-              Your recording is sent to the interview server for local Whisper transcription. The audio is not saved.
+              Your recording is sent to the configured Whisper service for transcription. The audio is not saved.
             </p>
             {answerState.status === "recording" ? (
               <button className="btn btn-ghost" onClick={onStopRecording} disabled={disabled}>
@@ -140,7 +140,7 @@ export function QuestionPanel({
               </button>
             ) : (
               <button className="btn btn-ghost" onClick={onStartRecording} disabled={!answerConsent || answerBusy || disabled}>
-                {answerState.status === "transcribing" ? "Transcribing locally…" : "Record spoken answer"}
+                {answerState.status === "transcribing" ? "Transcribing…" : "Record spoken answer"}
               </button>
             )}
             {answerState.transcript && (
