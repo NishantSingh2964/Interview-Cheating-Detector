@@ -14,4 +14,5 @@ export const VIOLATION_LABELS: Record<ViolationType, string> = {
   sound: "Sound",
   heartbeat_lost: "Heartbeat lost",
   candidate_voice: "Candidate voice recognized",
+  other_voice: "Voice difference (review)",
 };
