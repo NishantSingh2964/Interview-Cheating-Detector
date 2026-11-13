@@ -83,7 +83,7 @@ export function useObjectMonitor(
           phoneStreak++;
           if (phoneStreak >= DETECT.phoneConfirmFrames) {
             onRef.current({
-              type: "mobile_device",
+              type: "object_detected", // phone detection
               reason: "Phone detected near screen",
               confidence: 0.9,
             });
@@ -93,7 +93,7 @@ export function useObjectMonitor(
           personStreak++;
           if (personStreak >= DETECT.personConfirmFrames) {
             onRef.current({
-              type: "multiple_people",
+              type: "multiple_persons", // multiple people detected
               reason: "Multiple people detected",
               confidence: 0.9,
             });
