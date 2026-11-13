@@ -14,16 +14,27 @@ export const SERVER_RULES = {
 };
 
 export const DETECT = {
+  // Face thresholds
   noFaceMs: 3000,
-  multipleFacesMs: 2000,
+  multipleFacesMs: 3000,          // longer to avoid transient spikes
   lookingAwayMs: 2500,
+  // New face‑filter constants
+  minFaceConfidence: 0.6,         // faces below this are ignored
+  minFaceAreaPct: 0.04,           // ignore faces covering < 4 % of frame
+  multipleFacesConfirmFrames: 2, // need 2 consecutive detections
+
+  // Object detection thresholds
   objectMs: 1600,
   soundMs: 2500,
   cooldownMs: 10000,
-  soundRms: 0.09,
-  objectScore: 0.45,
-  phoneScore: 0.25,
-  objectIou: 0.45,
+  soundRms: 0.12,                 // lower to cut ambient noise
+  objectScore: 0.55,              // overall object confidence
+  phoneScore: 0.2,               // phone confidence (lowered for more logs)
+  phoneConfirmFrames: 5,          // phone must be seen 5 frames in‑a‑row
+  objectConfirmFrames: 3,         // generic objects need 3 consecutive frames
+  personScore: 0.55,
+  personConfirmFrames: 2,                // tighter duplicate‑filter
   faceIntervalMs: 200,
-  objectIntervalMs: 800,
+  objectIntervalMs: 400,
 };
+

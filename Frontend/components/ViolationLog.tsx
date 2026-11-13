@@ -14,7 +14,7 @@ const TYPE_ICONS: Partial<Record<string, string>> = {
   no_face: "👤",
   multiple_faces: "👥",
   looking_away: "👀",
-  object_detected: "📱",
+  object_detected: "🔎",
   multiple_persons: "🧑‍🤝‍🧑",
   window: "🪟",
   fullscreen: "⛶",

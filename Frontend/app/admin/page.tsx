@@ -47,7 +47,7 @@ function getAiLikelihoodBand(band: AnalysisResult["aiLikelihoodBand"]) {
 
 const TYPE_ICONS: Record<string, string> = {
   no_face: "👤", multiple_faces: "👥", looking_away: "👀",
-  object_detected: "📱", multiple_persons: "🧑‍🤝‍🧑",
+  object_detected: "🔎", multiple_persons: "🧑‍🤝‍🧑",
   window: "🪟", fullscreen: "⛶", copy: "📋", paste: "📌",
   contextmenu: "🖱", sound: "🔊", heartbeat_lost: "💔", other_voice: "🎙️",
 };

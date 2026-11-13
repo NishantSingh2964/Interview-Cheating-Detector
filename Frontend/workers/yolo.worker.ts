@@ -215,6 +215,7 @@ self.onmessage = async (e: MessageEvent) => {
 
   if (type === "init") {
     self.postMessage({ type: "loading" });
+      console.debug('[yolo.worker] loading started');
     try {
       await loadModel();
       self.postMessage({ type: "ready" });

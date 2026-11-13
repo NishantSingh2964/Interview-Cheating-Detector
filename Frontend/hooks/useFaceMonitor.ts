@@ -57,6 +57,21 @@ export function useFaceMonitor(
     let lastRun = 0;
     let landmarker: { close: () => void; detectForVideo: (video: HTMLVideoElement, ts: number) => { faceLandmarks: Landmark[][] } } | null = null;
 
+  // Helper: compute normalized face area (0‑1)
+  function faceAreaPct(landmarks: Landmark[]) {
+    let minX = 1, maxX = 0, minY = 1, maxY = 0;
+    for (const p of landmarks) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
+    }
+    return (maxX - minX) * (maxY - minY);
+  }
+
+  // Streak counter for confirming multiple‑faces
+  let multipleFacesStreak = 0;
+
     const noFace = createSignalGate(DETECT.noFaceMs, DETECT.cooldownMs);
     const multiple = createSignalGate(DETECT.multipleFacesMs, DETECT.cooldownMs);
     const away = createSignalGate(DETECT.lookingAwayMs, DETECT.cooldownMs);

@@ -6,7 +6,7 @@ import { analyzeAnswer, endSession, enrollVoice, getSession, getQuestions, saveI
 import { FALLBACK_QUESTIONS } from "@/lib/questions";
 import { HEARTBEAT_MS } from "@/lib/config";
 import { VIOLATION_LABELS } from "@/lib/labels";
-import type { AnalysisResult, CandidateAnswerMode, Decision, Question, Violation, ViolationReport } from "@/lib/types";
+import type { AnalysisResult, CandidateAnswerMode, Decision, Question, Violation, ViolationReport, ViolationType } from "@/lib/types";
 
 import { useFaceMonitor } from "@/hooks/useFaceMonitor";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
@@ -56,6 +56,25 @@ const ANSWER_REVIEW_CONSENT_VERSION = "answer-ai-likeness-v2";
 
 function violationKey(type: string, reason: string, time: string) {
   return `${type}|${reason}|${new Date(time).getTime()}`;
+}
+
+function formatViolationToast(type: ViolationType, reason: string) {
+  switch (type) {
+    case "no_face":
+      return `The camera lost you. It gets attached. (${reason})`;
+    case "multiple_faces":
+    case "multiple_persons":
+      return `Unexpected guest stars! The camera spotted extra people. (${reason})`;
+    case "looking_away":
+      return `Your eyes went on a side quest. (${reason})`;
+    case "object_detected":
+      return `A surprise prop made a cameo. (${reason})`;
+    case "copy":
+    case "paste":
+      return `Clipboard shenanigans spotted. (${reason})`;
+    default:
+      return `${VIOLATION_LABELS[type]}: ${reason}`;
+  }
 }
 
 interface Props {
@@ -192,7 +211,7 @@ export function InterviewClient({ sessionId }: Props) {
         ...partial,
       };
       pendingServerViolationKeysRef.current.add(violationKey(report.type, report.reason, report.time));
-      addViolationToast(`${VIOLATION_LABELS[report.type]}: ${report.reason}`);
+      addViolationToast(formatViolationToast(report.type, report.reason));
       const sent = reportRef.current?.(report) ?? false;
       console.info("[proctor] violation recorded", {
         type: report.type,
@@ -220,7 +239,7 @@ export function InterviewClient({ sessionId }: Props) {
   const handleServerViolation = useCallback((violation: Violation) => {
     const key = violationKey(violation.type, violation.reason, violation.time);
     if (pendingServerViolationKeysRef.current.delete(key)) return;
-    addViolationToast(`${VIOLATION_LABELS[violation.type]}: ${violation.reason}`);
+    addViolationToast(formatViolationToast(violation.type, violation.reason));
     setLocalViolations((current) => [...current, violation]);
   }, [addViolationToast]);
 
@@ -231,7 +250,7 @@ export function InterviewClient({ sessionId }: Props) {
       stopCamera();
       setStage("terminated");
     } else if (d.action === "warn") {
-      setWarnBanner(d.message);
+      setWarnBanner(`The proctor's keeping score (politely): ${d.message}`);
       setTimeout(() => setWarnBanner(null), 7000);
     }
   }, [cancelAnswerRecording, stopCamera]);
