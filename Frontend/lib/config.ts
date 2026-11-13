@@ -30,7 +30,7 @@ export const DETECT = {
   soundRms: 0.12,                 // lower to cut ambient noise
   objectScore: 0.55,              // overall object confidence
   phoneScore: 0.2,               // phone confidence (lowered for more logs)
-  phoneConfirmFrames: 5,          // phone must be seen 5 frames in‑a‑row
+  phoneConfirmFrames: 2,          // phone must be seen 2 frames in‑a‑row (quicker detection)
   objectConfirmFrames: 3,         // generic objects need 3 consecutive frames
   personScore: 0.55,
   personConfirmFrames: 2,                // tighter duplicate‑filter

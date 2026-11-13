@@ -96,6 +96,16 @@ export function useObjectDetect(
         const now = Date.now();
         const persons = detBoxes.filter(b => b.label === 'person');
         const phones = detBoxes.filter(b => PHONE_LABELS.has(b.label));
+        // Debug: log raw phone detections before any area filter
+        if (process.env.NODE_ENV === 'development') {
+          console.debug('[ObjectDetect] raw phone detections', {
+            count: phones.length,
+            details: phones.map(p => ({
+              confidence: Number(p.score.toFixed(3)),
+              area: Number((p.width * p.height).toFixed(5)),
+            })),
+          });
+        }
         const objects = detBoxes.filter(b => OBJECT_LABELS.has(b.label) || PHONE_LABELS.has(b.label));
 
         // ---- Person logs (dev only) ----
@@ -215,7 +225,14 @@ export function useObjectDetect(
       ctx.drawImage(video, 0, 0, W, H);
       const imageData = ctx.getImageData(0, 0, W, H);
       console.debug('[ObjectDetect] sending image data to worker');
-      worker.postMessage({ type: 'detect', imageData, width: W, height: H }, [imageData.data.buffer]);
+      worker.postMessage({
+        type: 'detect',
+        imageData,
+        width: W,
+        height: H,
+        scoreThresh: DETECT.objectScore,
+        phoneScoreThresh: DETECT.phoneScore,
+      }, [imageData.data.buffer]);
     }
 
     // Cleanup on unmount / disabled
