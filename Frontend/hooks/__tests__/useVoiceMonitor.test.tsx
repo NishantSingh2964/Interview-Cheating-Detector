@@ -27,8 +27,8 @@ class MockAnalyserNode {
     // Fill array with a dummy waveform whose RMS equals the generated value
     const rms = this.getData();
     // Simple sine‑wave approximation
-    for (let i = 0; i < _.length; i++) {
-      _.[i] = Math.sin((i / _.length) * Math.PI * 2) * rms;
+    for (let i = 0; i < _arr.length; i++) {
+      _arr[i] = Math.sin((i / _arr.length) * Math.PI * 2) * rms;
     }
   }
 }

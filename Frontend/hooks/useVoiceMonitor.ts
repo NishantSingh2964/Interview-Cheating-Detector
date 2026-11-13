@@ -101,7 +101,7 @@ export function useVoiceMonitor(
           if (stopped) return;
           if (!analyser || !dataArray) return;
           analyser.getFloatTimeDomainData(dataArray);
-          const rms = computeRms(dataArray);
+          const rms = computeRms(dataArray as unknown as Float32Array);
           referenceRms.push(rms);
           if (Date.now() - start < REFERENCE_MS) {
             setTimeout(recordChunk, CHUNK_MS);
@@ -126,7 +126,7 @@ export function useVoiceMonitor(
       if (!analyser || !dataArray) return;
 
       analyser.getFloatTimeDomainData(dataArray);
-      const rms = computeRms(dataArray);
+      const rms = computeRms(dataArray as unknown as Float32Array);
 
       liveRmsWindow.push(rms);
       if (liveRmsWindow.length > referenceRms.length) liveRmsWindow.shift();
