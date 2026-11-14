@@ -107,9 +107,11 @@ export async function transcribeAnswer(input: {
   question: number;
   audio: Blob;
 }) {
-  let response: Response;
+  console.debug('[API] transcribeAnswer audio size', (input.audio as Blob).size);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
-    response = await fetch(
+    const response = await fetch(
       `${SERVER_URL}/api/analysis/transcribe?sessionId=${encodeURIComponent(input.sessionId)}&question=${input.question}`,
       {
         method: "POST",
@@ -118,13 +120,19 @@ export async function transcribeAnswer(input: {
           "X-Answer-Review-Consent": "answer-ai-likeness-v2",
         },
         body: input.audio,
+        signal: controller.signal,
       },
     );
-  } catch {
+    if (!response.ok) throw new ApiError(await readError(response), response.status);
+    return (await response.json()) as { transcript: string };
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError("Transcription request timed out after 30 seconds.");
+    }
     throw new ApiError("The interview server is not reachable.");
+  } finally {
+    clearTimeout(timeout);
   }
-  if (!response.ok) throw new ApiError(await readError(response), response.status);
-  return (await response.json()) as { transcript: string };
 }
 
 export function analyzeAnswer(input: {

@@ -72,10 +72,13 @@ function formatViolationToast(type: ViolationType, reason: string) {
     case "copy":
     case "paste":
       return `Clipboard shenanigans spotted. (${reason})`;
+    case "candidate_voice":
+      return `Candidate voice recognized. (${reason})`;
     default:
       return `${VIOLATION_LABELS[type]}: ${reason}`;
   }
 }
+
 
 interface Props {
   sessionId: string;

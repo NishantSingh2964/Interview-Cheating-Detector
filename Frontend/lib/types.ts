@@ -12,6 +12,7 @@ export const VIOLATION_TYPES = [
   "sound",
   "heartbeat_lost",
   "other_voice",
+  "candidate_voice",
 ] as const;
 
 export type ViolationType = (typeof VIOLATION_TYPES)[number];

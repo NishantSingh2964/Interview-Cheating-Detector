@@ -29,7 +29,9 @@ export const DETECT = {
   cooldownMs: 10000,
   soundRms: 0.12,                 // lower to cut ambient noise
   objectScore: 0.55,              // overall object confidence
-  phoneScore: 0.2,               // phone confidence (lowered for more logs)
+  voiceOtherThreshold: 0.25, // tighter detection of other voices               // similarity below this → other_voice violation
+  voiceCandidateThreshold: 0.7, // stricter for positive candidate detection            // optional – similarity above this → candidate_voice (not used yet)
+  phoneScore: 0.5, // confidence threshold for phone detection
   phoneConfirmFrames: 2,          // phone must be seen 2 frames in‑a‑row (quicker detection)
   objectConfirmFrames: 3,         // generic objects need 3 consecutive frames
   personScore: 0.55,
