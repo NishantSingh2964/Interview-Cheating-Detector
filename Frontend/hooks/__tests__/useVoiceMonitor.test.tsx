@@ -2,7 +2,7 @@
 // Run with `npm test` (jest) after ensuring dev dependencies are installed.
 
 import { useRef } from "react";
-import { renderHook, act } from "@testing-library/react-hooks";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useVoiceMonitor } from "../useVoiceMonitor";
 import { DETECT } from "@/lib/config";
 
@@ -81,7 +81,7 @@ describe("useVoiceMonitor – voice differentiation", () => {
     rmsGenerator = createRmsGenerator(referenceRms.concat(liveRms));
 
     // Render the hook – enabled = true
-    const { result, waitForNextUpdate } = renderHook(
+    renderHook(
       () => {
         const audioRef = useRef<HTMLAudioElement>(null);
         return useVoiceMonitor(audioRef, true, onViolation);
@@ -98,12 +98,10 @@ describe("useVoiceMonitor – voice differentiation", () => {
       jest.advanceTimersByTime(2_000);
     });
 
-    // Allow pending effects to settle
-    await waitForNextUpdate?.();
-
-    // Verify calls – first should be candidate_voice, later other_voice
-    const callTypes = onViolation.mock.calls.map((c) => c[0].type);
-    expect(callTypes).toContain("candidate_voice");
-    expect(callTypes).toContain("other_voice");
+    await waitFor(() => {
+      const callTypes = onViolation.mock.calls.map((call) => call[0].type);
+      expect(callTypes).toContain("candidate_voice");
+      expect(callTypes).toContain("other_voice");
+    });
   });
 });
