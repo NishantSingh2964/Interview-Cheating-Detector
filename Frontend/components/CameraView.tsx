@@ -4,21 +4,25 @@ import { useEffect, useRef } from "react";
 import type { RefObject } from "react";
 import type { DetectionBox } from "@/lib/types";
 import type { FaceStatus } from "@/hooks/useFaceMonitor";
-import type { ObjectDetectStatus } from "@/hooks/useObjectDetect";
 import type { VoiceActivityStatus } from "@/hooks/useVoiceActivity";
+
+type ObjectDetectStatus = "idle" | "loading" | "ready" | "unavailable";
+import type { RekognitionFaceStatus } from "@/hooks/useRekognitionFaceMonitor";
 
 interface Props {
   videoRef: RefObject<HTMLVideoElement | null>;
   stream: MediaStream | null;
-  faceCount: number;
   faceStatus: FaceStatus;
+  rekognitionFaceStatus: RekognitionFaceStatus;
+  rekognitionFaceCount: number | null;
+  rekognitionFaceDetail: string;
   objectStatus: ObjectDetectStatus;
   voiceActivityStatus: VoiceActivityStatus;
   voiceEnrolled: boolean;
   voiceComparisonEnabled: boolean | null;
   speaking: boolean;
   soundLevel: number;       // 0–1 RMS
-  boxes: DetectionBox[];    // YOLO bounding boxes
+  boxes: DetectionBox[];
   mirrored?: boolean;
 }
 
@@ -29,7 +33,7 @@ const STATUS_LABEL: Record<FaceStatus, string> = {
   error: "Model error",
 };
 
-export function CameraView({ videoRef, stream, faceCount, faceStatus, objectStatus, voiceActivityStatus, voiceEnrolled, voiceComparisonEnabled, speaking, soundLevel, boxes, mirrored = true }: Props) {
+export function CameraView({ videoRef, stream, faceStatus, rekognitionFaceStatus, rekognitionFaceCount, rekognitionFaceDetail, objectStatus, voiceActivityStatus, voiceEnrolled, voiceComparisonEnabled, speaking, soundLevel, boxes, mirrored = true }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   /* Attach stream to video */
@@ -49,6 +53,8 @@ export function CameraView({ videoRef, stream, faceCount, faceStatus, objectStat
     const canvas = canvasRef.current;
     const video = videoRef.current;
     if (!canvas || !video) return;
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -58,7 +64,7 @@ export function CameraView({ videoRef, stream, faceCount, faceStatus, objectStat
     const H = canvas.height;
 
     for (const box of boxes) {
-      const x = box.x * W;
+      const x = (mirrored ? 1 - box.x - box.width : box.x) * W;
       const y = box.y * H;
       const w = box.width * W;
       const h = box.height * H;
@@ -78,10 +84,10 @@ export function CameraView({ videoRef, stream, faceCount, faceStatus, objectStat
       ctx.font = "bold 12px monospace";
       ctx.fillText(label, x + 5, y - 7);
     }
-  }, [boxes, videoRef]);
+  }, [boxes, mirrored, videoRef]);
 
-  const faceOk = faceStatus === "ready" && faceCount === 1;
-  const faceWarn = faceStatus === "ready" && faceCount !== 1;
+  const faceOk = rekognitionFaceStatus === "ready" && rekognitionFaceCount === 1;
+  const faceWarn = rekognitionFaceStatus === "ready" && rekognitionFaceCount !== 1;
   const soundPct = Math.min(100, soundLevel * 600); // amplify for display
 
   return (
@@ -113,7 +119,11 @@ export function CameraView({ videoRef, stream, faceCount, faceStatus, objectStat
           <div style={{ position: "absolute", top: "10px", left: "10px" }}>
             <span className={`badge ${faceWarn ? "badge-warn" : faceOk ? "badge-ok" : "badge-muted"}`}>
               <span className={`pulse-dot ${faceWarn ? "warn" : faceOk ? "ok" : "accent"}`} />
-              {faceStatus === "loading" ? "Loading…" : faceCount === 0 ? "No face" : faceCount === 1 ? "1 face" : `${faceCount} faces`}
+              {rekognitionFaceStatus === "checking"
+                ? "Checking faces…"
+                : rekognitionFaceStatus === "ready"
+                  ? rekognitionFaceCount === 0 ? "No face" : `${rekognitionFaceCount} face${rekognitionFaceCount === 1 ? "" : "s"}`
+                  : "Face check unavailable"}
             </span>
           </div>
         )}
@@ -125,6 +135,18 @@ export function CameraView({ videoRef, stream, faceCount, faceStatus, objectStat
           </span>
         </div>
       </div>
+
+      {rekognitionFaceStatus !== "idle" && (
+        <p
+          aria-live="polite"
+          role={rekognitionFaceStatus === "error" ? "alert" : "status"}
+          style={{ margin: 0, fontSize: "11px", color: rekognitionFaceStatus === "error" ? "var(--terminate)" : "var(--text-muted)" }}
+        >
+          {rekognitionFaceStatus === "checking" && "Amazon Rekognition is checking faces and objects…"}
+          {rekognitionFaceStatus === "ready" && `Amazon Rekognition detected ${rekognitionFaceCount ?? 0} face${rekognitionFaceCount === 1 ? "" : "s"}; object checks are active.`}
+          {rekognitionFaceStatus === "error" && `Amazon Rekognition unavailable: ${rekognitionFaceDetail}`}
+        </p>
+      )}
 
       <p aria-live="polite" style={{ margin: 0, fontSize: "11px", color: objectStatus === "unavailable" ? "var(--terminate)" : "var(--text-muted)" }}>
         {objectStatus === "loading" && "Loading object detection…"}
