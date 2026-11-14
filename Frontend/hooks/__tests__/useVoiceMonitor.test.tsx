@@ -1,6 +1,7 @@
 // Automated test for useVoiceMonitor – simulates candidate voice then a different voice
 // Run with `npm test` (jest) after ensuring dev dependencies are installed.
 
+import { useRef } from "react";
 import { renderHook, act } from "@testing-library/react-hooks";
 import { useVoiceMonitor } from "../useVoiceMonitor";
 import { DETECT } from "@/lib/config";
@@ -63,7 +64,6 @@ let rmsGenerator = createRmsGenerator([]);
 (global as any).AudioContext = class extends MockAudioContext {
   constructor() {
     super(() => rmsGenerator());
-    super();
   }
 };
 
@@ -81,8 +81,11 @@ describe("useVoiceMonitor – voice differentiation", () => {
     rmsGenerator = createRmsGenerator(referenceRms.concat(liveRms));
 
     // Render the hook – enabled = true
-    const { result, waitForNextUpdate } = renderHook(() =>
-      useVoiceMonitor(null, true, onViolation),
+    const { result, waitForNextUpdate } = renderHook(
+      () => {
+        const audioRef = useRef<HTMLAudioElement>(null);
+        return useVoiceMonitor(audioRef, true, onViolation);
+      }
     );
 
     // Fast‑forward reference capture (≈3 s)

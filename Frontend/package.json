@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "test": "jest",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -21,11 +22,14 @@
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
+    "@testing-library/react-hooks": "^8.0.1",
+    "@types/jest": "^30.0.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.4",
+    "jest": "^30.5.2",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

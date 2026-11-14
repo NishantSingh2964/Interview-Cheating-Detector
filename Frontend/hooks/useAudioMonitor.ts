@@ -36,7 +36,7 @@ export function useAudioMonitor(
     let audioCtx: AudioContext | null = null;
     let analyser: AnalyserNode | null = null;
     let source: MediaStreamAudioSourceNode | null = null;
-    let dataArray: Float32Array | null = null;
+    let dataArray: Float32Array<ArrayBuffer> | null = null;
     let lastViolationAt = 0;
     const gateSound = createSignalGate(0, DETECT.cooldownMs);
 
