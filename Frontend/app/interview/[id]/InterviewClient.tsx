@@ -2,17 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { analyzeAnswer, endSession, enrollVoice, getSession, getQuestions, saveInterviewPreferences, transcribeAnswer } from "@/lib/api";
+import { analyzeAnswer, endSession, enrollVoice, getRekognitionStatus, getSession, getQuestions, saveInterviewPreferences, saveRekognitionConsent, transcribeAnswer, verifyRekognitionReady } from "@/lib/api";
 import { FALLBACK_QUESTIONS } from "@/lib/questions";
 import { HEARTBEAT_MS } from "@/lib/config";
 import { VIOLATION_LABELS } from "@/lib/labels";
 import type { AnalysisResult, CandidateAnswerMode, Decision, Question, Violation, ViolationReport, ViolationType } from "@/lib/types";
 
 import { useFaceMonitor } from "@/hooks/useFaceMonitor";
+import { useRekognitionFaceMonitor } from "@/hooks/useRekognitionFaceMonitor";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { useWindowMonitor } from "@/hooks/useWindowMonitor";
 import { useSoundMonitor } from "@/hooks/useSoundMonitor";
-import { useObjectDetect } from "@/hooks/useObjectDetect";
 import { useProctorSocket } from "@/hooks/useProctorSocket";
 
 import { CameraView } from "@/components/CameraView";
@@ -53,6 +53,7 @@ const VOICE_ENROLLMENT_PROMPTS = [
 const MIN_VOICE_CLIP_SAMPLES = 16000 * 3;
 const MAX_LIVE_VOICE_CLIP_SAMPLES = 16000 * 15;
 const ANSWER_REVIEW_CONSENT_VERSION = "answer-ai-likeness-v2";
+const REKOGNITION_CONSENT_VERSION = "rekognition-proctoring-v1";
 
 function violationKey(type: string, reason: string, time: string) {
   return `${type}|${reason}|${new Date(time).getTime()}`;
@@ -108,6 +109,10 @@ export function InterviewClient({ sessionId }: Props) {
   const [voiceEnrollmentError, setVoiceEnrollmentError] = useState<string | null>(null);
   const [voiceEnrollmentSaving, setVoiceEnrollmentSaving] = useState(false);
   const [answerConsent, setAnswerConsent] = useState(false);
+  const [faceAnalysisConsent, setFaceAnalysisConsent] = useState(false);
+  const [rekognitionConfigured, setRekognitionConfigured] = useState<boolean | null>(null);
+  const [rekognitionConsentSaving, setRekognitionConsentSaving] = useState(false);
+  const [cameraStarting, setCameraStarting] = useState(false);
   const [candidateMode, setCandidateMode] = useState<CandidateAnswerMode | null>(null);
   const [preferencesSaving, setPreferencesSaving] = useState(false);
   const [preferencesError, setPreferencesError] = useState<string | null>(null);
@@ -115,6 +120,7 @@ export function InterviewClient({ sessionId }: Props) {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const savedRekognitionConsentRef = useRef(false);
   const activeRecordingRef = useRef<ActiveRecording | null>(null);
   const pendingServerViolationKeysRef = useRef(new Set<string>());
   const answerQueueRequestRef = useRef(false);
@@ -151,6 +157,15 @@ export function InterviewClient({ sessionId }: Props) {
   useEffect(() => {
     getQuestions().then(setQuestions).catch(() => setQuestions(FALLBACK_QUESTIONS));
     let cancelled = false;
+    getRekognitionStatus()
+      .then(({ enabled }) => {
+        if (!cancelled) setRekognitionConfigured(enabled);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.warn("[rekognition] could not check server configuration:", error);
+        setRekognitionConfigured(false);
+      });
     getSession(sessionId)
       .then(({ session }) => {
         if (cancelled) return;
@@ -163,6 +178,12 @@ export function InterviewClient({ sessionId }: Props) {
             session.answerReviewConsentVersion === ANSWER_REVIEW_CONSENT_VERSION,
           ),
         );
+        const hasRekognitionConsent = Boolean(
+          session.rekognitionFaceConsentAt &&
+          session.rekognitionFaceConsentVersion === REKOGNITION_CONSENT_VERSION,
+        );
+        savedRekognitionConsentRef.current = hasRekognitionConsent;
+        setFaceAnalysisConsent(hasRekognitionConsent);
         if (session.status === "terminated" || session.status === "ended") {
           setStage(session.status);
         } else if (!session.answerMode) {
@@ -546,7 +567,25 @@ export function InterviewClient({ sessionId }: Props) {
   }, [questionIdx, active, sessionId, sendQuestionChanged]);
 
   // ── Monitors ─────────────────────────────────────────────────
-  const { status: faceStatus, faceCount } = useFaceMonitor(videoRef, active, emit);
+  const rekognitionActive = active && rekognitionConfigured === true && faceAnalysisConsent;
+  const handleRekognitionFailure = useCallback((detail: string) => {
+    cancelAnswerRecording();
+    stopCamera();
+    const message = `Amazon Rekognition became unavailable. The interview was stopped: ${detail}`;
+    setSessionError(message);
+    setStage("error");
+    void endSession(sessionId, "proctoring_unavailable").catch((error) => {
+      console.error("[rekognition] could not close the interview after a service failure:", error);
+      setSessionError(`${message} The server session could not be closed: ${error instanceof Error ? error.message : "unknown error"}`);
+    });
+  }, [cancelAnswerRecording, sessionId, stopCamera]);
+  const {
+    status: rekognitionFaceStatus,
+    faceCount: rekognitionFaceCount,
+    objects: rekognitionObjects,
+    detail: rekognitionFaceDetail,
+  } = useRekognitionFaceMonitor(videoRef, sessionId, rekognitionActive, emit, handleRekognitionFailure);
+  const { status: faceStatus } = useFaceMonitor(videoRef, active, emit);
   useWindowMonitor(active, emit);
   const { level: soundLevel } = useSoundMonitor(stream, active, emit);
   const voiceModeEnabled = candidateMode === "speaking";
@@ -557,7 +596,12 @@ export function InterviewClient({ sessionId }: Props) {
       ? captureEnrollmentClip
       : voiceModeEnabled && active && voiceEnrolled ? reportLiveVoiceSegment : undefined,
   );
-  const { status: objectStatus, boxes } = useObjectDetect(videoRef, active, emit);
+  const objectStatus = rekognitionFaceStatus === "ready"
+    ? "ready"
+    : rekognitionFaceStatus === "error"
+      ? "unavailable"
+      : rekognitionFaceStatus === "checking" ? "loading" : "idle";
+  const boxes = rekognitionObjects;
 
   // ── Keyboard nav ─────────────────────────────────────────────
   useEffect(() => {
@@ -574,27 +618,85 @@ export function InterviewClient({ sessionId }: Props) {
   // ── Camera permission ────────────────────────────────────────
   const requestCamera = useCallback(async () => {
     setCameraError(null);
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      streamRef.current = s;
-      setStream(s);
-      setStage("active");
-    } catch (err) {
-      setCameraError(
-        err instanceof DOMException && err.name === "NotAllowedError"
-          ? "Camera permission was denied. Please allow access and retry."
-          : "Could not access your camera or microphone.",
-      );
+    if (rekognitionConfigured !== true) {
+      setCameraError("Amazon Rekognition is not available. The interview cannot start.");
+      return;
     }
-  }, []);
+    if (!faceAnalysisConsent) {
+      setCameraError("Consent for Amazon Rekognition is required to start this interview.");
+      return;
+    }
+
+    setCameraStarting(true);
+    try {
+      try {
+        if (faceAnalysisConsent !== savedRekognitionConsentRef.current) {
+          await saveRekognitionConsent(sessionId, faceAnalysisConsent);
+          savedRekognitionConsentRef.current = faceAnalysisConsent;
+        }
+      } catch (error) {
+        setCameraError(error instanceof Error ? error.message : "Could not save your consent choice.");
+        return;
+      }
+
+      try {
+        await verifyRekognitionReady(sessionId);
+      } catch (error) {
+        const message = `Amazon Rekognition is unavailable or missing required permissions. The interview cannot start: ${error instanceof Error ? error.message : "unknown error"}`;
+        setSessionError(message);
+        setStage("error");
+        try {
+          await endSession(sessionId, "proctoring_unavailable");
+        } catch (closeError) {
+          console.error("[rekognition] could not close the interview after readiness failed:", closeError);
+          setSessionError(`${message} The server session could not be closed: ${closeError instanceof Error ? closeError.message : "unknown error"}`);
+        }
+        return;
+      }
+
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        streamRef.current = s;
+        setStream(s);
+        setStage("active");
+      } catch (error) {
+        setCameraError(
+          error instanceof DOMException && error.name === "NotAllowedError"
+            ? "Camera permission was denied. Please allow access and retry."
+            : error instanceof Error
+              ? error.message
+              : "Could not access your camera or microphone.",
+        );
+      }
+    } finally {
+      setCameraStarting(false);
+    }
+  }, [faceAnalysisConsent, rekognitionConfigured, sessionId]);
+
+  const changeRekognitionConsent = useCallback(async (consent: boolean) => {
+    setFaceAnalysisConsent(consent);
+    setCameraError(null);
+    if (rekognitionConfigured !== true) return;
+
+    setRekognitionConsentSaving(true);
+    try {
+      await saveRekognitionConsent(sessionId, consent);
+      savedRekognitionConsentRef.current = consent;
+    } catch (error) {
+      setFaceAnalysisConsent(savedRekognitionConsentRef.current);
+      setCameraError(error instanceof Error ? error.message : "Could not save your consent choice.");
+    } finally {
+      setRekognitionConsentSaving(false);
+    }
+  }, [rekognitionConfigured, sessionId]);
 
   const total = localViolations.filter((violation) => violation.type !== "other_voice").length;
   const currentAnswerState = answerStates[questionIdx + 1] ?? EMPTY_ANSWER_STATE;
@@ -807,17 +909,52 @@ export function InterviewClient({ sessionId }: Props) {
           <p style={{ color: "var(--text-secondary)", fontSize: "14px", lineHeight: 1.65, margin: "0 0 28px" }}>
             This interview uses AI-assisted proctoring. Your camera and microphone must
             be enabled throughout the session. The camera checks for visible faces and
-            objects such as phones in real time. No video is recorded; detection signals
-            are logged.
+            objects such as phones using Amazon Rekognition. The app does not record video
+            or retain camera snapshots. AWS access and consent are required to start.
           </p>
+          {rekognitionConfigured === true && (
+            <label style={{ display: "flex", gap: "10px", alignItems: "flex-start", color: "var(--text-secondary)", fontSize: "12px", lineHeight: 1.55, marginBottom: "20px", textAlign: "left" }}>
+              <input
+                type="checkbox"
+                checked={faceAnalysisConsent}
+                onChange={(event) => { void changeRekognitionConsent(event.target.checked); }}
+                disabled={rekognitionConsentSaving || cameraStarting}
+                style={{ marginTop: "3px" }}
+              />
+              <span>
+                I consent to a small camera snapshot being sent to Amazon Rekognition every few seconds for face counting and object detection. The app does not store the snapshots. I understand this consent is required to start the interview.
+              </span>
+            </label>
+          )}
+          {rekognitionConfigured === false && (
+            <p style={{ color: "var(--text-muted)", fontSize: "12px", lineHeight: 1.5, marginBottom: "20px" }}>
+              Amazon Rekognition is not configured on the server. The interview cannot start; contact the administrator.
+            </p>
+          )}
+          {rekognitionConfigured === null && (
+            <p role="status" style={{ color: "var(--text-muted)", fontSize: "12px", marginBottom: "20px" }}>
+              Checking AWS Rekognition configuration...
+            </p>
+          )}
+          {rekognitionConfigured === true && !faceAnalysisConsent && (
+            <p style={{ color: "var(--warn)", fontSize: "12px", lineHeight: 1.5, marginBottom: "20px" }}>
+              Consent is required to use Amazon Rekognition and start this interview.
+            </p>
+          )}
           {cameraError && (
             <div style={{ padding: "12px 14px", borderRadius: "var(--radius-sm)", background: "var(--terminate-bg)", border: "1px solid rgba(239,68,68,0.25)", color: "var(--terminate)", fontSize: "13px", marginBottom: "20px", textAlign: "left" }}>
               {cameraError}
             </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-            <button id="allow-camera-btn" className="btn btn-primary btn-lg" onClick={requestCamera} style={{ width: "100%" }}>
-              Allow Camera &amp; Start
+            <button
+              id="allow-camera-btn"
+              className="btn btn-primary btn-lg"
+              disabled={rekognitionConfigured !== true || !faceAnalysisConsent || rekognitionConsentSaving || cameraStarting}
+              onClick={() => { void requestCamera(); }}
+              style={{ width: "100%" }}
+            >
+              {cameraStarting ? "Checking AWS and requesting camera..." : "Allow Camera & Start"}
             </button>
             <button className="btn btn-ghost" onClick={() => router.replace("/")} style={{ width: "100%" }}>
               Go Back
@@ -910,8 +1047,10 @@ export function InterviewClient({ sessionId }: Props) {
           <CameraView
             videoRef={videoRef}
             stream={stream}
-            faceCount={faceCount}
             faceStatus={faceStatus}
+            rekognitionFaceStatus={rekognitionFaceStatus}
+            rekognitionFaceCount={rekognitionFaceCount}
+            rekognitionFaceDetail={rekognitionFaceDetail}
             objectStatus={objectStatus}
             voiceActivityStatus={voiceActivityStatus}
             voiceEnrolled={voiceModeEnabled && voiceEnrolled}

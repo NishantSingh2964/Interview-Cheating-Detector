@@ -1,5 +1,5 @@
 import { SERVER_URL } from "@/lib/config";
-import type { AnalysisResult, CandidateAnswerMode, Question, Session, Violation } from "@/lib/types";
+import type { AnalysisResult, CandidateAnswerMode, DetectionBox, Question, Session, Violation } from "@/lib/types";
 
 export class ApiError extends Error {
   status?: number;
@@ -51,9 +51,10 @@ export function getSession(id: string) {
   return request<SessionDetails>(`/api/sessions/${id}`);
 }
 
-export function endSession(id: string) {
+export function endSession(id: string, reason?: "proctoring_unavailable") {
   return request<{ session: Session }>(`/api/sessions/${id}/end`, {
     method: "POST",
+    ...(reason ? { body: JSON.stringify({ reason }) } : {}),
   });
 }
 
@@ -65,6 +66,54 @@ export function saveInterviewPreferences(id: string, input: {
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export function getRekognitionStatus() {
+  return request<{ enabled: boolean }>("/api/analysis/rekognition/status");
+}
+
+export function saveRekognitionConsent(id: string, consent: boolean) {
+  return request<{ consent: boolean }>(`/api/sessions/${encodeURIComponent(id)}/rekognition-consent`, {
+    method: "POST",
+    body: JSON.stringify({ consent }),
+  });
+}
+
+export function verifyRekognitionReady(id: string) {
+  return request<{ ready: boolean }>("/api/analysis/rekognition/ready", {
+    method: "POST",
+    headers: { "X-Rekognition-Consent": "rekognition-proctoring-v1" },
+    body: JSON.stringify({ sessionId: id }),
+  });
+}
+
+export async function analyzeRekognitionFrame(id: string, frame: Blob) {
+  let response: Response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    response = await fetch(
+      `${SERVER_URL}/api/analysis/rekognition/${encodeURIComponent(id)}/frame`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "image/jpeg",
+          "X-Rekognition-Consent": "rekognition-proctoring-v1",
+        },
+        body: frame,
+        signal: controller.signal,
+      },
+    );
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiError("Amazon Rekognition request timed out.");
+    }
+    throw new ApiError("The interview server is not reachable.");
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) throw new ApiError(await readError(response), response.status);
+  return (await response.json()) as { faceCount: number; objects: DetectionBox[] };
 }
 
 export async function enrollVoice(id: string, clips: Float32Array[]) {

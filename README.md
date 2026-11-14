@@ -21,19 +21,19 @@ The application uses Next.js for the frontend, Node.js for backend services, and
 - Uses built-in browser APIs to monitor candidate activity.
 
 ### 2. Multiple Face Detection
-- Uses MediaPipe for face detection.
-- Identifies situations where multiple faces appear in the candidate's camera feed.
+- Uses Amazon Rekognition to count faces in consented camera snapshots.
+- MediaPipe is retained only for gaze and head-orientation monitoring.
 
 ### 3. Looking Away Detection
-- Uses MediaPipe to monitor candidate facial orientation.
+- Uses MediaPipe face landmarks to monitor candidate facial orientation.
 - Detects when candidates repeatedly look away from the camera.
 
 ### 4. Multiple Person Detection
 - Identifies the presence of additional people during an assessment.
-- Uses computer vision to monitor the candidate's surroundings.
+- Uses person detections returned by Amazon Rekognition.
 
 ### 5. Electronic Device Detection
-- Uses YOLOv8 and ONNX Runtime for object detection.
+- Uses Amazon Rekognition label detection.
 - Detects electronic devices such as:
   - Mobile phones
   - Laptops
@@ -49,6 +49,14 @@ The application uses Next.js for the frontend, Node.js for backend services, and
 - Estimates whether candidate responses may be AI-generated or agent-assisted.
 - Flags responses when the estimated AI/agent-generated score is **60% or higher**.
 - Helps administrators identify potentially suspicious responses, including cases where candidates may be reading AI-generated answers.
+
+### 8. Required Amazon Rekognition Face and Object Detection
+- Candidates must consent to sending a reduced-size camera snapshot to Amazon Rekognition every five seconds. The application does not store the snapshots.
+- The server checks AWS access before camera startup. Missing consent, AWS configuration, or required permissions prevents the interview from starting; a later Rekognition failure stops the interview. There is no local face-count or YOLO fallback.
+- Each snapshot is checked with `DetectFaces` and `DetectLabels`; the readiness check also makes both calls. AWS charges may apply.
+- Object checks use Rekognition labels for people, phones, laptops, books, keyboards, mice, TVs, and remotes.
+- Configure `AWS_REGION` and the AWS SDK default credential chain on the **Server** deployment, allowing only `rekognition:DetectFaces` and `rekognition:DetectLabels`. Prefer a runtime IAM role/OIDC where supported; otherwise use server-only deployment secrets. Never put AWS credentials in frontend environment variables or commit them to the repository.
+- Face counts are imperfect signals; admins should review context rather than treating a detection as proof of misconduct.
 
 ![Candidate Portal](Frontend/lib/Candidate.png)
 
@@ -76,12 +84,12 @@ The admin portal provides a centralized interface for monitoring candidates and 
 | Next.js | Frontend development |
 | Node.js | Backend development |
 | Socket.IO | Real-time communication |
-| MediaPipe | Face detection and visual monitoring |
-| YOLOv8 | Electronic device detection |
-| ONNX Runtime | Model inference |
+| MediaPipe | Gaze and head-orientation monitoring |
+| ONNX Runtime Web | Voice activity detection dependency |
 | Web Audio API | Audio monitoring |
 | WavLM | Audio analysis |
 | OpenRouter | AI-based response analysis |
+| Amazon Rekognition | Required server-side face and object detection |
 
 ## System Architecture
 
@@ -118,12 +126,13 @@ The admin portal provides a centralized interface for monitoring candidates and 
 | Admin Portal | Next.js | Implemented |
 | Real-time Monitoring | Socket.IO | Implemented |
 | Tab Switching Detection | Browser APIs | Implemented |
-| Multiple Face Detection | MediaPipe | Implemented |
+| Multiple Face Detection | Amazon Rekognition | Implemented; AWS and consent required |
 | Looking Away Detection | MediaPipe | Implemented |
-| Multiple Person Detection | MediaPipe | Implemented |
-| Electronic Device Detection | YOLOv8 + ONNX Runtime | Implemented |
+| Multiple Person Detection | Amazon Rekognition | Implemented |
+| Electronic Device Detection | Amazon Rekognition | Implemented |
 | Audio Detection | Web Audio API + WavLM | Implemented and refined |
 | AI Response Analysis | OpenRouter | Implemented |
+| Amazon Rekognition Face and Object Detection | AWS Rekognition | Required; blocks interview startup if unavailable |
 | AI-generated Response Flagging | 60% threshold | Implemented |
 
 ## Important Note
