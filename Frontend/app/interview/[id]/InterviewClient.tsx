@@ -1040,10 +1040,8 @@ export function InterviewClient({ sessionId }: Props) {
         </div>
       )}
 
-      {/* 3-column layout */}
-      <main style={{ flex: 1, display: "grid", gridTemplateColumns: "300px 1fr 280px", gap: "20px", padding: "24px", alignItems: "start" }}>
-        {/* Left — camera */}
-        <div>
+      <main className="interview-layout">
+        <section className="interview-camera" aria-label="Camera and monitoring status">
           <CameraView
             videoRef={videoRef}
             stream={stream}
@@ -1059,42 +1057,42 @@ export function InterviewClient({ sessionId }: Props) {
             soundLevel={soundLevel}
             boxes={boxes}
           />
-        </div>
+        </section>
 
-        {/* Center — question */}
-        <div style={{ minHeight: "380px", display: "flex", flexDirection: "column" }}>
-          {questions.length > 0 ? (
-            <QuestionPanel
-              questions={questions}
-              currentIndex={questionIdx}
-              answerMode={candidateMode ?? "writing"}
-              answerConsent={answerConsent}
-              answerState={currentAnswerState}
-              onTranscriptChange={(transcript) => updateAnswerState(questionIdx + 1, {
-                transcript,
-                source: "typed",
-                status: "ready",
-                analysis: null,
-                error: null,
-              })}
-              onAnswerPaste={() => updateAnswerState(questionIdx + 1, { pasteDetected: true })}
-              onStartRecording={startAnswerRecording}
-              onStopRecording={stopAnswerRecording}
-              onNext={() => { void advanceQuestion(); }}
-              onPrev={() => setQuestionIdx((i) => Math.max(i - 1, 0))}
-              onSubmit={() => { void submitInterview(); }}
-              disabled={ending}
-            />
-          ) : (
-            <div className="glass" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <div className="spinner" />
-            </div>
-          )}
-        </div>
+        <div className="interview-panels">
+          <section className="interview-question" aria-label="Interview question">
+            {questions.length > 0 ? (
+              <QuestionPanel
+                questions={questions}
+                currentIndex={questionIdx}
+                answerMode={candidateMode ?? "writing"}
+                answerConsent={answerConsent}
+                answerState={currentAnswerState}
+                onTranscriptChange={(transcript) => updateAnswerState(questionIdx + 1, {
+                  transcript,
+                  source: "typed",
+                  status: "ready",
+                  analysis: null,
+                  error: null,
+                })}
+                onAnswerPaste={() => updateAnswerState(questionIdx + 1, { pasteDetected: true })}
+                onStartRecording={startAnswerRecording}
+                onStopRecording={stopAnswerRecording}
+                onNext={() => { void advanceQuestion(); }}
+                onPrev={() => setQuestionIdx((i) => Math.max(i - 1, 0))}
+                onSubmit={() => { void submitInterview(); }}
+                disabled={ending}
+              />
+            ) : (
+              <div className="glass" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div className="spinner" />
+              </div>
+            )}
+          </section>
 
-        {/* Right — violations */}
-        <div className="glass" style={{ padding: "16px", maxHeight: "calc(100vh - 140px)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <ViolationLog violations={localViolations} totalCount={total} />
+          <section className="glass interview-violations" aria-label="Violation count and log">
+            <ViolationLog violations={localViolations} totalCount={total} />
+          </section>
         </div>
       </main>
     </div>
