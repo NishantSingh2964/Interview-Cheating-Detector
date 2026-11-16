@@ -12,7 +12,6 @@
     "postinstall": "node scripts/setup-assets.mjs"
   },
   "dependencies": {
-    "@mediapipe/tasks-vision": "^1.2.0",
     "@ricky0123/vad-web": "^0.0.31",
     "next": "16.4.4",
     "onnxruntime-web": "^1.31.1",

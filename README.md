@@ -1,6 +1,6 @@
 # AI-Powered Online Assessment & Cheating Detection System
 
-An AI-powered online assessment monitoring system designed to identify suspicious candidate activities during online interviews or assessments. The platform combines browser-based monitoring, computer vision, object detection, audio analysis, and AI-based response analysis to help administrators monitor candidates in real time.
+An AI-powered online assessment monitoring system designed to identify suspicious candidate activities during online interviews or assessments. The platform combines browser-based monitoring, audio analysis, and AI-based response analysis to help administrators monitor candidates in real time.
 
 ## Project Overview
 
@@ -20,31 +20,16 @@ The application uses Next.js for the frontend, Node.js for backend services, and
 - Identifies when the assessment window loses focus or is minimized.
 - Uses built-in browser APIs to monitor candidate activity.
 
-### 2. Multiple Face Detection
-- Uses MediaPipe for face detection.
-- Identifies situations where multiple faces appear in the candidate's camera feed.
+### 2. Visual Cheating Detection
+- MediaPipe and YOLO runtime detection have been removed.
+- AutoProctor integration is planned; visual cheating detection is currently unavailable.
 
-### 3. Looking Away Detection
-- Uses MediaPipe to monitor candidate facial orientation.
-- Detects when candidates repeatedly look away from the camera.
-
-### 4. Multiple Person Detection
-- Identifies the presence of additional people during an assessment.
-- Uses computer vision to monitor the candidate's surroundings.
-
-### 5. Electronic Device Detection
-- Uses YOLOv8 and ONNX Runtime for object detection.
-- Detects electronic devices such as:
-  - Mobile phones
-  - Laptops
-  - Other supported electronic devices
-
-### 6. Audio & Sound Detection
+### 3. Audio & Sound Detection
 - Uses the Web Audio API and WavLM library.
 - Monitors audio input for potentially suspicious sounds.
 - Includes sound detection testing and refinement.
 
-### 7. AI-Based Response Analysis
+### 4. AI-Based Response Analysis
 - Integrates OpenRouter for AI-based candidate response analysis.
 - Estimates whether candidate responses may be AI-generated or agent-assisted.
 - Flags responses when the estimated AI/agent-generated score is **60% or higher**.
@@ -76,9 +61,7 @@ The admin portal provides a centralized interface for monitoring candidates and 
 | Next.js | Frontend development |
 | Node.js | Backend development |
 | Socket.IO | Real-time communication |
-| MediaPipe | Face detection and visual monitoring |
-| YOLOv8 | Electronic device detection |
-| ONNX Runtime | Model inference |
+| ONNX Runtime | Speech activity detection |
 | Web Audio API | Audio monitoring |
 | WavLM | Audio analysis |
 | OpenRouter | AI-based response analysis |
@@ -118,10 +101,7 @@ The admin portal provides a centralized interface for monitoring candidates and 
 | Admin Portal | Next.js | Implemented |
 | Real-time Monitoring | Socket.IO | Implemented |
 | Tab Switching Detection | Browser APIs | Implemented |
-| Multiple Face Detection | MediaPipe | Implemented |
-| Looking Away Detection | MediaPipe | Implemented |
-| Multiple Person Detection | MediaPipe | Implemented |
-| Electronic Device Detection | YOLOv8 + ONNX Runtime | Implemented |
+| Visual Cheating Detection | AutoProctor | Planned |
 | Audio Detection | Web Audio API + WavLM | Implemented and refined |
 | AI Response Analysis | OpenRouter | Implemented |
 | AI-generated Response Flagging | 60% threshold | Implemented |

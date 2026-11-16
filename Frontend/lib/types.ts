@@ -87,15 +87,6 @@ export interface AnalysisResult {
   analyzedAt: string;
 }
 
-export interface DetectionBox {
-  label: string;
-  score: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 export interface ReportedEvent extends ViolationReport {
   delivery: "sent" | "offline";
 }

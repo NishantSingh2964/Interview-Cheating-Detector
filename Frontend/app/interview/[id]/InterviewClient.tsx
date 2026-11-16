@@ -8,11 +8,9 @@ import { HEARTBEAT_MS } from "@/lib/config";
 import { VIOLATION_LABELS } from "@/lib/labels";
 import type { AnalysisResult, CandidateAnswerMode, Decision, Question, Violation, ViolationReport, ViolationType } from "@/lib/types";
 
-import { useFaceMonitor } from "@/hooks/useFaceMonitor";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { useWindowMonitor } from "@/hooks/useWindowMonitor";
 import { useSoundMonitor } from "@/hooks/useSoundMonitor";
-import { useObjectDetect } from "@/hooks/useObjectDetect";
 import { useProctorSocket } from "@/hooks/useProctorSocket";
 
 import { CameraView } from "@/components/CameraView";
@@ -546,7 +544,6 @@ export function InterviewClient({ sessionId }: Props) {
   }, [questionIdx, active, sessionId, sendQuestionChanged]);
 
   // ── Monitors ─────────────────────────────────────────────────
-  const { status: faceStatus, faceCount } = useFaceMonitor(videoRef, active, emit);
   useWindowMonitor(active, emit);
   const { level: soundLevel } = useSoundMonitor(stream, active, emit);
   const voiceModeEnabled = candidateMode === "speaking";
@@ -557,7 +554,6 @@ export function InterviewClient({ sessionId }: Props) {
       ? captureEnrollmentClip
       : voiceModeEnabled && active && voiceEnrolled ? reportLiveVoiceSegment : undefined,
   );
-  const { status: objectStatus, boxes } = useObjectDetect(videoRef, active, emit);
 
   // ── Keyboard nav ─────────────────────────────────────────────
   useEffect(() => {
@@ -910,15 +906,11 @@ export function InterviewClient({ sessionId }: Props) {
           <CameraView
             videoRef={videoRef}
             stream={stream}
-            faceCount={faceCount}
-            faceStatus={faceStatus}
-            objectStatus={objectStatus}
             voiceActivityStatus={voiceActivityStatus}
             voiceEnrolled={voiceModeEnabled && voiceEnrolled}
             voiceComparisonEnabled={voiceComparisonEnabled}
             speaking={speaking}
             soundLevel={soundLevel}
-            boxes={boxes}
           />
         </div>
 
