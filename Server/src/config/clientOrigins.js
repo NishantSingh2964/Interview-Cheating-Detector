@@ -1,5 +1,6 @@
 const DEFAULT_CLIENT_ORIGIN = "http://localhost:3000";
 
+// Fall back to the legacy origin setting and local development.
 function getAllowedClientOrigins(env = process.env) {
   const configuredOrigins =
     env.CLIENT_URLS || env.CLIENT_URL || DEFAULT_CLIENT_ORIGIN;
