@@ -20,7 +20,7 @@ export type ViolationType = (typeof VIOLATION_TYPES)[number];
 export type DecisionAction = "ok" | "warn" | "terminate";
 
 export type SessionStatus = "active" | "terminated" | "ended";
-export type SessionEndReason = "submitted" | "heartbeat_timeout" | "violation_limit";
+export type SessionEndReason = "submitted" | "heartbeat_timeout" | "violation_limit" | "proctoring_unavailable";
 export type CandidateAnswerMode = "writing" | "speaking";
 
 export interface Question {
@@ -39,6 +39,8 @@ export interface Session {
   answerMode?: CandidateAnswerMode | null;
   answerReviewConsentAt?: string | null;
   answerReviewConsentVersion?: string | null;
+  rekognitionFaceConsentAt?: string | null;
+  rekognitionFaceConsentVersion?: string | null;
   voiceEnrolled: boolean;
   startedAt: string;
   endedAt: string | null;

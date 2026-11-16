@@ -5,6 +5,12 @@ const Session = require("../models/Session");
 const AnswerAnalysis = require("../models/AnswerAnalysis");
 const { transcribeAudio } = require("../services/transcriptionService");
 const { getAiLikelihoodBand, MIN_REVIEW_WORDS } = require("../services/answerAnalysisService");
+const {
+  detectFaceCount,
+  detectObjects,
+  isRekognitionConfigured,
+  verifyRekognitionAccess,
+} = require("../services/rekognitionService");
 
 const SUPPORTED_AUDIO_TYPES = new Set([
   "audio/webm",
@@ -17,6 +23,104 @@ const MAX_ANSWER_CHARS = 20000;
 const MAX_QUESTION_CHARS = 2000;
 const ANSWER_RETENTION_DAYS = 7;
 const ANSWER_CONSENT_VERSION = "answer-ai-likeness-v2";
+const REKOGNITION_CONSENT_VERSION = "rekognition-proctoring-v1";
+const REKOGNITION_FRAME_INTERVAL_MS = 5000;
+const lastRekognitionFrameAt = new Map();
+
+router.get("/rekognition/status", (_req, res) => {
+  res.json({ enabled: isRekognitionConfigured() });
+});
+
+router.post("/rekognition/ready", async (req, res) => {
+  try {
+    if (req.get("x-rekognition-consent") !== REKOGNITION_CONSENT_VERSION) {
+      return res.status(403).json({ message: "Consent is required before checking Amazon Rekognition." });
+    }
+    const { sessionId } = req.body ?? {};
+    if (!sessionId || !mongoose.isValidObjectId(sessionId)) {
+      return res.status(400).json({ message: "A valid session ID is required." });
+    }
+
+    const session = await Session.findById(sessionId)
+      .select("status +rekognitionFaceConsentAt +rekognitionFaceConsentVersion");
+    if (!session) return res.status(404).json({ message: "Interview session not found." });
+    if (session.status !== "active") {
+      return res.status(409).json({ message: "This interview session is no longer active." });
+    }
+    if (
+      !session.rekognitionFaceConsentAt ||
+      session.rekognitionFaceConsentVersion !== REKOGNITION_CONSENT_VERSION
+    ) {
+      return res.status(403).json({ message: "Candidate consent for Amazon Rekognition is required." });
+    }
+
+    await verifyRekognitionAccess();
+    res.json({ ready: true });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
+    console.error("[analysis] Rekognition readiness check failed:", error);
+    res.status(503).json({
+      message: "Amazon Rekognition is unavailable or missing DetectFaces/DetectLabels permissions.",
+    });
+  }
+});
+
+router.post(
+  "/rekognition/:id/frame",
+  express.raw({ type: "image/jpeg", limit: "1mb" }),
+  async (req, res) => {
+    try {
+      if (req.get("x-rekognition-consent") !== REKOGNITION_CONSENT_VERSION) {
+        return res.status(403).json({ message: "Consent is required before sending a frame for face analysis." });
+      }
+      if (!mongoose.isValidObjectId(req.params.id)) {
+        return res.status(400).json({ message: "A valid session ID is required." });
+      }
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+        return res.status(415).json({ message: "A JPEG frame is required." });
+      }
+
+      const session = await Session.findById(req.params.id)
+        .select("status +rekognitionFaceConsentAt +rekognitionFaceConsentVersion");
+      if (!session) return res.status(404).json({ message: "Interview session not found." });
+      if (session.status !== "active") {
+        return res.status(409).json({ message: "This interview session is no longer active." });
+      }
+      if (
+        !session.rekognitionFaceConsentAt ||
+        session.rekognitionFaceConsentVersion !== REKOGNITION_CONSENT_VERSION
+      ) {
+        return res.status(403).json({ message: "Candidate consent for Amazon Rekognition is required." });
+      }
+
+      const now = Date.now();
+      const lastRequestAt = lastRekognitionFrameAt.get(req.params.id) ?? 0;
+      if (now - lastRequestAt < REKOGNITION_FRAME_INTERVAL_MS) {
+        return res.status(429).json({ message: "Face frames may be submitted once every five seconds." });
+      }
+      lastRekognitionFrameAt.set(req.params.id, now);
+      if (lastRekognitionFrameAt.size > 5000) {
+        for (const [sessionId, timestamp] of lastRekognitionFrameAt) {
+          if (now - timestamp > 60_000) lastRekognitionFrameAt.delete(sessionId);
+        }
+      }
+
+      const [faceCount, objects] = await Promise.all([
+        detectFaceCount(req.body),
+        detectObjects(req.body),
+      ]);
+      res.json({ faceCount, objects });
+    } catch (error) {
+      if (error.statusCode) {
+        return res.status(error.statusCode).json({ message: error.message });
+      }
+      console.error("[analysis] Rekognition face analysis failed:", error);
+      res.status(502).json({ message: "Amazon Rekognition could not analyze this frame." });
+    }
+  },
+);
 
 router.post(
   "/transcribe",
