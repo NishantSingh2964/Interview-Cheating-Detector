@@ -66,7 +66,7 @@ async function main() {
     console.log(`    REST  → http://localhost:${PORT}`);
     console.log(`    WS    → http://localhost:${PORT} (Socket.IO)`);
     const previewLabel = previewHostPattern
-      ? " + configured Vercel branch previews"
+      ? `, Vercel preview host pattern: ${previewHostPattern}`
       : "";
     console.log(`    CORS  → ${[...allowedClientOrigins].join(", ")}${previewLabel}\n`);
   });
