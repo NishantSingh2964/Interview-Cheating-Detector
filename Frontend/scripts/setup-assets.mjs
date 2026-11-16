@@ -19,7 +19,7 @@ if (existsSync(ortSrc)) {
   }
   console.log("Copied ONNX Runtime files to public/ort");
 } else {
-  console.warn("onnxruntime-web is not installed; object detection cannot load.");
+  console.warn("onnxruntime-web is not installed; voice activity detection cannot load.");
 }
 
 const mediaSrc = path.join(root, "node_modules", "@mediapipe", "tasks-vision", "wasm");
@@ -29,7 +29,7 @@ if (existsSync(mediaSrc)) {
   cpSync(mediaSrc, mediaDest, { recursive: true });
   console.log("Copied MediaPipe wasm to public/mediapipe");
 } else {
-  console.warn("@mediapipe/tasks-vision is not installed; face detection cannot load.");
+  console.warn("@mediapipe/tasks-vision is not installed; gaze monitoring cannot load.");
 }
 
 const vadSrc = path.join(root, "node_modules", "@ricky0123", "vad-web", "dist");
@@ -62,22 +62,4 @@ if (!existsSync(modelDest)) {
   console.log(`Downloaded face landmarker (${bytes.length} bytes)`);
 } else {
   console.log("Face landmarker model already present");
-}
-
-const objectModelDest = path.join(root, "public", "models", "yolov8n.onnx");
-if (!existsSync(objectModelDest)) {
-  const url =
-    "https://huggingface.co/s1777/yolo-v8n-onnx/resolve/8723d02c28498aebfbca2a7b4df49bf231b4737b/yolov8n.onnx";
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Could not download the object detection model (${response.status}).`);
-  }
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.length < 1_000_000) {
-    throw new Error("The object detection model download was unexpectedly small.");
-  }
-  writeFileSync(objectModelDest, bytes);
-  console.log(`Downloaded object detection model (${bytes.length} bytes)`);
-} else {
-  console.log("Object detection model already present");
 }

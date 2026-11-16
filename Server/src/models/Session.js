@@ -10,7 +10,7 @@ const sessionSchema = new mongoose.Schema(
     },
     endReason: {
       type: String,
-      enum: ["submitted", "heartbeat_timeout", "violation_limit"],
+      enum: ["submitted", "heartbeat_timeout", "violation_limit", "proctoring_unavailable"],
       default: null,
     },
     currentQuestion: { type: Number, default: 1 },
@@ -18,6 +18,8 @@ const sessionSchema = new mongoose.Schema(
     answerMode: { type: String, enum: ["writing", "speaking"], default: null },
     answerReviewConsentAt: { type: Date, default: null, select: false },
     answerReviewConsentVersion: { type: String, default: null, select: false },
+    rekognitionFaceConsentAt: { type: Date, default: null, select: false },
+    rekognitionFaceConsentVersion: { type: String, default: null, select: false },
     voiceEnrolled: { type: Boolean, default: false },
     voiceprint: { type: [Number], select: false },
     voiceConsentAt: { type: Date, select: false },

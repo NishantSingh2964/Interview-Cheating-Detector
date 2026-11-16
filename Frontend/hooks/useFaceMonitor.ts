@@ -39,46 +39,21 @@ export function useFaceMonitor(
   onViolation: Emit,
 ) {
   const onViolationRef = useRef(onViolation);
-  onViolationRef.current = onViolation;
   const [status, setStatus] = useState<FaceStatus>("idle");
-  const [faceCount, setFaceCount] = useState(0);
   const [detail, setDetail] = useState("Face monitor is off");
 
   useEffect(() => {
-    if (!enabled) {
-      setStatus("idle");
-      setFaceCount(0);
-      setDetail("Face monitor is off");
-      return;
-    }
+    onViolationRef.current = onViolation;
+  }, [onViolation]);
+
+  useEffect(() => {
+    if (!enabled) return;
 
     let stopped = false;
     let frame = 0;
     let lastRun = 0;
     let landmarker: { close: () => void; detectForVideo: (video: HTMLVideoElement, ts: number) => { faceLandmarks: Landmark[][] } } | null = null;
-
-  // Helper: compute normalized face area (0‑1)
-  function faceAreaPct(landmarks: Landmark[]) {
-    let minX = 1, maxX = 0, minY = 1, maxY = 0;
-    for (const p of landmarks) {
-      minX = Math.min(minX, p.x);
-      maxX = Math.max(maxX, p.x);
-      minY = Math.min(minY, p.y);
-      maxY = Math.max(maxY, p.y);
-    }
-    return (maxX - minX) * (maxY - minY);
-  }
-
-  // Streak counter for confirming multiple‑faces
-  let multipleFacesStreak = 0;
-
-    const noFace = createSignalGate(DETECT.noFaceMs, DETECT.cooldownMs);
-    const multiple = createSignalGate(DETECT.multipleFacesMs, DETECT.cooldownMs);
     const away = createSignalGate(DETECT.lookingAwayMs, DETECT.cooldownMs);
-    const startedAt = performance.now();
-
-    setStatus("loading");
-    setDetail("Loading face model…");
 
     const loop = () => {
       if (stopped) return;
@@ -96,24 +71,8 @@ export function useFaceMonitor(
         return;
       }
 
-      setFaceCount(faces.length);
-      const warmedUp = now - startedAt > 1000;
       const stamp = Date.now();
 
-      if (warmedUp && noFace.update(faces.length === 0, stamp)) {
-        onViolationRef.current({
-          type: "no_face",
-          reason: "No face in frame",
-          confidence: 0.9,
-        });
-      }
-      if (multiple.update(faces.length >= 2, stamp)) {
-        onViolationRef.current({
-          type: "multiple_faces",
-          reason: `${faces.length} faces in frame`,
-          confidence: 0.9,
-        });
-      }
       const turned = faces.length === 1 && isLookingAway(faces[0]);
       if (away.update(turned, stamp)) {
         onViolationRef.current({
@@ -135,7 +94,7 @@ export function useFaceMonitor(
               delegate,
             },
             runningMode: "VIDEO",
-            numFaces: 4,
+            numFaces: 1,
             minFaceDetectionConfidence: 0.5,
           });
 
@@ -165,5 +124,11 @@ export function useFaceMonitor(
     };
   }, [enabled, videoRef]);
 
-  return { status, faceCount, detail };
+  const visibleStatus: FaceStatus = enabled
+    ? status === "idle" ? "loading" : status
+    : "idle";
+  return {
+    status: visibleStatus,
+    detail: enabled ? status === "idle" ? "Loading face model..." : detail : "Face monitor is off",
+  };
 }

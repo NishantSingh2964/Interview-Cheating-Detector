@@ -140,7 +140,7 @@ export function QuestionPanel({
               </button>
             ) : (
               <button className="btn btn-ghost" onClick={onStartRecording} disabled={!answerConsent || answerBusy || disabled}>
-                {answerState.status === "transcribing" ? "Transcribing…" : "Record spoken answer"}
+                {answerState.status === "transcribing" ? (<><span className="loading loading-spinner" aria-hidden="true" /> Transcribing…</>) : "Record spoken answer"}
               </button>
             )}
             {answerState.transcript && (

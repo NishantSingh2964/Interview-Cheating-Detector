@@ -12,6 +12,35 @@ const VOICE_CLIP_COUNT = 3;
 const MIN_CLIP_SAMPLES = VOICE_SAMPLE_RATE * 3;
 const MAX_CLIP_SAMPLES = VOICE_SAMPLE_RATE * 15;
 const ANSWER_CONSENT_VERSION = "answer-ai-likeness-v2";
+const REKOGNITION_CONSENT_VERSION = "rekognition-proctoring-v1";
+
+router.post("/:id/rekognition-consent", async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: "A valid session ID is required." });
+    }
+    if (typeof req.body?.consent !== "boolean") {
+      return res.status(400).json({ message: "consent must be a boolean." });
+    }
+
+    const session = await Session.findOne({ _id: req.params.id, status: "active" })
+      .select("+rekognitionFaceConsentAt +rekognitionFaceConsentVersion");
+    if (!session) {
+      const exists = await Session.exists({ _id: req.params.id });
+      return res.status(exists ? 409 : 404).json({
+        message: exists ? "Consent can only be updated for an active interview." : "Interview session not found.",
+      });
+    }
+
+    session.rekognitionFaceConsentAt = req.body.consent ? new Date() : null;
+    session.rekognitionFaceConsentVersion = req.body.consent ? REKOGNITION_CONSENT_VERSION : null;
+    await session.save();
+    res.json({ consent: req.body.consent });
+  } catch (error) {
+    console.error("[sessions] Rekognition consent update failed:", error);
+    res.status(500).json({ message: "Could not save the Amazon Rekognition consent choice." });
+  }
+});
 
 router.post("/:id/preferences", async (req, res) => {
   try {
@@ -104,7 +133,7 @@ router.get("/", async (_req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const session = await Session.findById(req.params.id)
-      .select("+answerReviewConsentAt +answerReviewConsentVersion")
+      .select("+answerReviewConsentAt +answerReviewConsentVersion +rekognitionFaceConsentAt +rekognitionFaceConsentVersion")
       .lean();
     if (!session) return res.status(404).json({ message: "Session not found" });
 
@@ -212,6 +241,10 @@ router.post(
  */
 router.post("/:id/end", async (req, res) => {
   try {
+    const { reason } = req.body ?? {};
+    if (reason !== undefined && reason !== "proctoring_unavailable") {
+      return res.status(400).json({ message: "Unsupported interview end reason." });
+    }
     const session = await Session.findById(req.params.id)
       .select("+voiceprint +voiceConsentAt +voiceConsentVersion");
     if (!session) return res.status(404).json({ message: "Session not found" });
@@ -219,7 +252,7 @@ router.post("/:id/end", async (req, res) => {
     if (session.status === "active") {
       session.status = "ended";
       session.endedAt = new Date();
-      session.endReason = "submitted";
+      session.endReason = reason ?? "submitted";
     }
     session.voiceEnrolled = false;
     session.set("voiceprint", undefined);
