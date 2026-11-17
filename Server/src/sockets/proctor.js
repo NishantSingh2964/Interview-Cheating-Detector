@@ -1,23 +1,10 @@
 const Session = require("../models/Session");
 const { processViolation } = require("../services/violationService");
-const {
-  SESSION_IDLE_END_MS,
-  VOICE_COOLDOWN_MS,
-  VOICE_OTHER_THRESHOLD,
-  VOICE_REQUIRED_LOW_SCORES,
-  VOICE_WINDOW_SIZE,
-} = require("../config/rules");
-const { compareVoiceprint, isVoiceModelAvailable } = require("../services/voiceService");
-const { evaluateVoiceWindow } = require("../services/voiceDecisionService");
+const { SESSION_IDLE_END_MS } = require("../config/rules");
 const { endInactiveSession, expireInactiveSessions } = require("../services/sessionLifecycleService");
-
-const VOICE_SAMPLE_RATE = 16000;
-const VOICE_MIN_CLIP_SAMPLES = VOICE_SAMPLE_RATE * 3;
-const VOICE_MAX_CLIP_SAMPLES = VOICE_SAMPLE_RATE * 15;
 
 /** sessionId → nodeJS timer ID (for heartbeat monitoring) */
 const heartbeatTimers = new Map();
-const voiceWindows = new Map();
 
 /**
  * Register all Socket.IO event handlers.
@@ -65,13 +52,6 @@ function registerProctorSocket(io) {
         socket.join(`session:${sessionId}`);
         socket.data.sessionId = sessionId;
         socket.data.role = "candidate";
-        const voiceModelAvailable = isVoiceModelAvailable();
-        socket.emit("voice_detection_status", {
-          enabled: VOICE_OTHER_THRESHOLD !== null && voiceModelAvailable,
-          reason: VOICE_OTHER_THRESHOLD === null
-            ? "threshold_not_configured"
-            : voiceModelAvailable ? null : "model_missing",
-        });
         console.log(`[socket] candidate ${socket.id} joined session ${sessionId}`);
 
         resetHeartbeatTimer(io, sessionId);
@@ -117,115 +97,6 @@ function registerProctorSocket(io) {
       }
     });
 
-    // ── Speaker comparison ─────────────────────────────────────
-    socket.on("voice_segment", async (payload) => {
-      const rejectSegment = (reason) => socket.emit("voice_segment_rejected", { reason });
-      const { sessionId, samples } = payload ?? {};
-      if (
-        socket.data.role !== "candidate" ||
-        socket.data.sessionId !== sessionId ||
-        !sessionId
-      ) {
-        rejectSegment("Join the matching interview session before sending voice samples.");
-        return;
-      }
-      if (VOICE_OTHER_THRESHOLD === null || !isVoiceModelAvailable()) {
-        rejectSegment("Voice comparison is not configured on the server.");
-        return;
-      }
-      if (socket.data.voiceSegmentBusy) {
-        rejectSegment("A voice segment is already being processed.");
-        return;
-      }
-      const now = Date.now();
-      if (now - (socket.data.lastVoiceSegmentAt || 0) < 1000) {
-        rejectSegment("Voice segments are arriving too quickly.");
-        return;
-      }
-
-      let audioBuffer;
-      if (Buffer.isBuffer(samples)) {
-        audioBuffer = samples;
-      } else if (samples instanceof ArrayBuffer) {
-        audioBuffer = Buffer.from(samples);
-      } else if (ArrayBuffer.isView(samples)) {
-        audioBuffer = Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength);
-      } else {
-        rejectSegment("Voice samples must be binary Float32 audio.");
-        return;
-      }
-      if (
-        audioBuffer.length % 4 !== 0 ||
-        audioBuffer.length / 4 < VOICE_MIN_CLIP_SAMPLES ||
-        audioBuffer.length / 4 > VOICE_MAX_CLIP_SAMPLES
-      ) {
-        rejectSegment("Voice segments must be 3 to 15 seconds long.");
-        return;
-      }
-
-      socket.data.voiceSegmentBusy = true;
-      socket.data.lastVoiceSegmentAt = now;
-      try {
-        const session = await Session.findById(sessionId).select("+voiceprint");
-        if (!session || session.status !== "active" || !session.voiceEnrolled || !session.voiceprint?.length) {
-          voiceWindows.delete(sessionId);
-          rejectSegment("This active session has no enrolled voice reference.");
-          return;
-        }
-
-        const clip = new Float32Array(audioBuffer.length / 4);
-        for (let index = 0; index < clip.length; index += 1) {
-          const sample = audioBuffer.readFloatLE(index * 4);
-          if (!Number.isFinite(sample) || Math.abs(sample) > 1) {
-            rejectSegment("Voice samples contain invalid audio values.");
-            return;
-          }
-          clip[index] = sample;
-        }
-
-        const similarity = compareVoiceprint(clip, session.voiceprint);
-        const state = voiceWindows.get(sessionId) ?? { results: [], lastViolationAt: 0 };
-        state.results.push(similarity < VOICE_OTHER_THRESHOLD);
-        state.results = state.results.slice(-VOICE_WINDOW_SIZE);
-        voiceWindows.set(sessionId, state);
-
-        const { ready, lowScores, flagged } = evaluateVoiceWindow(
-          state.results,
-          VOICE_WINDOW_SIZE,
-          VOICE_REQUIRED_LOW_SCORES,
-        );
-        if (
-          ready &&
-          flagged &&
-          Date.now() - state.lastViolationAt >= VOICE_COOLDOWN_MS
-        ) {
-          state.lastViolationAt = Date.now();
-          state.results = [];
-          const result = await processViolation({
-            sessionId,
-            question: session.currentQuestion,
-            type: "other_voice",
-            reason: `Voice differed from the enrolled reference in ${lowScores} of the last ${VOICE_WINDOW_SIZE} speech segments (similarity ${similarity.toFixed(2)}). This is an automated review signal, not proof of identity.`,
-            confidence: Math.max(0, Math.min(1, (1 - similarity) / 2)),
-            time: new Date().toISOString(),
-          });
-
-          if (!result.rejected) {
-            io.to(`session:${sessionId}`).emit("decision", result.decision);
-            io.to(`session:${sessionId}`).emit("violation_added", result.violation);
-            io.to("admins").emit("violation_added", result.violation);
-          } else {
-            voiceWindows.delete(sessionId);
-          }
-        }
-      } catch (err) {
-        console.error("[socket] voice segment processing error:", err);
-        rejectSegment("Could not compare this speech segment.");
-      } finally {
-        socket.data.voiceSegmentBusy = false;
-      }
-    });
-
     // ── Heartbeat ────────────────────────────────────────────
     socket.on("heartbeat", async ({ sessionId }) => {
       if (!sessionId) return;
@@ -255,16 +126,6 @@ function registerProctorSocket(io) {
 
     // ── Disconnect ───────────────────────────────────────────
     socket.on("disconnect", () => {
-      if (socket.data.sessionId && !socket.data.voiceSegmentBusy) {
-        void Session.findById(socket.data.sessionId)
-          .select("status")
-          .then((session) => {
-            if (!session || session.status !== "active") {
-              voiceWindows.delete(socket.data.sessionId);
-            }
-          })
-          .catch((err) => console.error("[socket] voice window cleanup error:", err));
-      }
       console.log(`[socket] disconnected: ${socket.id}`);
     });
   });
@@ -286,13 +147,11 @@ function resetHeartbeatTimer(io, sessionId) {
 
       if (session) {
         console.log(`[heartbeat] ended inactive session ${sessionId}`);
-        voiceWindows.delete(sessionId);
         io.to(`session:${sessionId}`).emit("session_closed", { status: "ended" });
         if (heartbeatTimers.get(sessionId) === timer) heartbeatTimers.delete(sessionId);
       } else {
         const current = await Session.findById(sessionId).select("status");
         if (!current || current.status !== "active") {
-          voiceWindows.delete(sessionId);
           if (heartbeatTimers.get(sessionId) === timer) heartbeatTimers.delete(sessionId);
         } else if (heartbeatTimers.get(sessionId) === timer) {
           resetHeartbeatTimer(io, sessionId);

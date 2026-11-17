@@ -6,19 +6,15 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "build": "npm run setup-voice-model",
+    "build": "node --check src/index.js",
     "transcription": "python -m uvicorn app:app --app-dir transcription --host 127.0.0.1 --port 8001",
-    "setup-voice-model": "node scripts/setup-voice-model.js",
-    "calibrate-voice": "node scripts/calibrate-voice.js",
     "test": "node --test"
   },
   "dependencies": {
-    "@aws-sdk/client-rekognition": "^3.1169.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "mongoose": "^8.9.5",
-    "sherpa-onnx-node": "^2.0.1",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {

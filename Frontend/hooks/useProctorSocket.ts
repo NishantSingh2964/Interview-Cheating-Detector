@@ -19,8 +19,6 @@ type Options = {
   enabled: boolean;
   onDecision?: (decision: Decision) => void;
   onViolationAdded?: (violation: Violation) => void;
-  onVoiceDetectionStatus?: (enabled: boolean) => void;
-  onVoiceSegmentRejected?: (reason: string) => void;
   onRejected?: (reason: string) => void;
   onSessionClosed?: (status: "terminated" | "ended") => void;
 };
@@ -31,17 +29,16 @@ export function useProctorSocket({
   enabled,
   onDecision,
   onViolationAdded,
-  onVoiceDetectionStatus,
-  onVoiceSegmentRejected,
   onRejected,
   onSessionClosed,
 }: Options) {
-  const handlers = useRef({ onDecision, onViolationAdded, onVoiceDetectionStatus, onVoiceSegmentRejected, onRejected, onSessionClosed, role, sessionId });
+  const handlers = useRef({ onDecision, onViolationAdded, onRejected, onSessionClosed, role, sessionId });
   useEffect(() => {
-    handlers.current = { onDecision, onViolationAdded, onVoiceDetectionStatus, onVoiceSegmentRejected, onRejected, onSessionClosed, role, sessionId };
-  }, [onDecision, onViolationAdded, onVoiceDetectionStatus, onVoiceSegmentRejected, onRejected, onSessionClosed, role, sessionId]);
+    handlers.current = { onDecision, onViolationAdded, onRejected, onSessionClosed, role, sessionId };
+  }, [onDecision, onViolationAdded, onRejected, onSessionClosed, role, sessionId]);
 
   const socketRef = useRef<Socket | null>(null);
+  const pendingViolationsRef = useRef<ViolationReport[]>([]);
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
@@ -65,6 +62,10 @@ export function useProctorSocket({
     socket.on("connect", () => {
       setConnected(true);
       join();
+      for (const violation of pendingViolationsRef.current) {
+        socket.emit("violation", violation);
+      }
+      pendingViolationsRef.current = [];
     });
     socket.on("disconnect", () => setConnected(false));
     socket.on("decision", (decision: Decision) => {
@@ -72,12 +73,6 @@ export function useProctorSocket({
     });
     socket.on("violation_added", (violation: Violation) => {
       handlers.current.onViolationAdded?.(violation);
-    });
-    socket.on("voice_detection_status", (status: { enabled?: boolean }) => {
-      handlers.current.onVoiceDetectionStatus?.(status?.enabled === true);
-    });
-    socket.on("voice_segment_rejected", (payload: { reason?: string }) => {
-      handlers.current.onVoiceSegmentRejected?.(payload?.reason || "The server rejected a speech segment.");
     });
     socket.on("violation_rejected", (payload: { reason?: string }) => {
       handlers.current.onRejected?.(payload?.reason || "The server rejected an event.");
@@ -90,14 +85,25 @@ export function useProctorSocket({
       socket.removeAllListeners();
       socket.disconnect();
       socketRef.current = null;
+      if (pendingViolationsRef.current.length > 0) {
+        console.warn("[proctor] clearing unsent violations when the socket closed.");
+        pendingViolationsRef.current = [];
+      }
       setConnected(false);
     };
   }, [enabled, role, sessionId]);
 
   const reportViolation = useCallback((payload: ViolationReport) => {
     const socket = socketRef.current;
-    if (!socket?.connected) return false;
-    socket.emit("violation", payload);
+    if (socket?.connected) {
+      socket.emit("violation", payload);
+      return true;
+    }
+    if (pendingViolationsRef.current.length >= 100) {
+      console.error("[proctor] cannot queue a violation because the socket is unavailable and its queue is full.");
+      return false;
+    }
+    pendingViolationsRef.current.push(payload);
     return true;
   }, []);
 
@@ -109,12 +115,5 @@ export function useProctorSocket({
     socketRef.current?.emit("question_changed", { sessionId: id, question });
   }, []);
 
-  const sendVoiceSegment = useCallback((id: string, samples: Float32Array) => {
-    const socket = socketRef.current;
-    if (!socket?.connected) return false;
-    socket.emit("voice_segment", { sessionId: id, samples });
-    return true;
-  }, []);
-
-  return { connected, reportViolation, sendHeartbeat, sendQuestionChanged, sendVoiceSegment };
+  return { connected, reportViolation, sendHeartbeat, sendQuestionChanged };
 }

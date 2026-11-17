@@ -17,6 +17,7 @@ const {
 const sessionsRouter = require("./routes/sessions");
 const questionsRouter = require("./routes/questions");
 const analysisRouter = require("./routes/analysis");
+const { router: autoProctorRouter } = require("./routes/autoProctor");
 
 const PORT = process.env.PORT || 4000;
 const allowedClientOrigins = getAllowedClientOrigins();
@@ -45,6 +46,7 @@ async function main() {
   app.use("/api/sessions", sessionsRouter);
   app.use("/api/questions", questionsRouter);
   app.use("/api/analysis", analysisRouter);
+  app.use("/api/autoproctor", autoProctorRouter);
 
   // ── HTTP + Socket.IO ────────────────────────────────────────
   const server = http.createServer(app);

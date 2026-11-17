@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,17 +19,7 @@ if (existsSync(ortSrc)) {
   }
   console.log("Copied ONNX Runtime files to public/ort");
 } else {
-  console.warn("onnxruntime-web is not installed; voice activity detection cannot load.");
-}
-
-const mediaSrc = path.join(root, "node_modules", "@mediapipe", "tasks-vision", "wasm");
-const mediaDest = path.join(root, "public", "mediapipe");
-if (existsSync(mediaSrc)) {
-  mkdirSync(mediaDest, { recursive: true });
-  cpSync(mediaSrc, mediaDest, { recursive: true });
-  console.log("Copied MediaPipe wasm to public/mediapipe");
-} else {
-  console.warn("@mediapipe/tasks-vision is not installed; gaze monitoring cannot load.");
+  console.warn("onnxruntime-web is not installed; speech activity detection cannot load.");
 }
 
 const vadSrc = path.join(root, "node_modules", "@ricky0123", "vad-web", "dist");
@@ -46,20 +36,4 @@ if (existsSync(vadSrc)) {
   console.log("Copied Silero VAD assets to public/vad");
 } else {
   console.warn("@ricky0123/vad-web is not installed; speech activity detection cannot load.");
-}
-
-const modelDest = path.join(root, "public", "models", "face_landmarker.task");
-mkdirSync(path.dirname(modelDest), { recursive: true });
-if (!existsSync(modelDest)) {
-  const url =
-    "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Could not download the face landmarker model (${response.status}).`);
-  }
-  const bytes = Buffer.from(await response.arrayBuffer());
-  writeFileSync(modelDest, bytes);
-  console.log(`Downloaded face landmarker (${bytes.length} bytes)`);
-} else {
-  console.log("Face landmarker model already present");
 }

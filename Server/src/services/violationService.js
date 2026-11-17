@@ -38,8 +38,7 @@ async function processViolation(payload) {
   }
 
   // ── Find session ────────────────────────────────────────────
-  const session = await Session.findById(sessionId)
-    .select("+voiceprint +voiceConsentAt +voiceConsentVersion");
+  const session = await Session.findById(sessionId);
   if (!session) {
     return { rejected: true, reason: "Session not found" };
   }
@@ -57,7 +56,6 @@ async function processViolation(payload) {
     time: time ? new Date(time) : new Date(),
   });
 
-  // Other-voice matches are review signals, not disciplinary violations.
   const isReviewSignal = type === "other_voice";
   if (!isReviewSignal) session.violationCount += 1;
   const count = session.violationCount;
@@ -74,10 +72,6 @@ async function processViolation(payload) {
     session.status = "terminated";
     session.endedAt = new Date();
     session.endReason = "violation_limit";
-    session.voiceEnrolled = false;
-    session.set("voiceprint", undefined);
-    session.set("voiceConsentAt", undefined);
-    session.set("voiceConsentVersion", undefined);
   } else if (count >= WARN_AT) {
     action = "warn";
     message = TERMINATION_ENABLED

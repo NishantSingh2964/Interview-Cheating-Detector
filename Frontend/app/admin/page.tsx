@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { listSessions, getSession, retryAnswerAnalysis } from "@/lib/api";
 import { useProctorSocket } from "@/hooks/useProctorSocket";
 import { VIOLATION_LABELS } from "@/lib/labels";
-import type { AnalysisResult, Session, Violation } from "@/lib/types";
+import type { AnalysisResult, AutoProctorEvent, Session, Violation } from "@/lib/types";
+import { ViolationLog } from "@/components/ViolationLog";
 
 type SessionStatus = Session["status"];
 
@@ -59,6 +61,7 @@ export default function AdminPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [expandedViolations, setExpandedViolations] = useState<Violation[]>([]);
   const [expandedAnalyses, setExpandedAnalyses] = useState<AnalysisResult[]>([]);
+  const [expandedAutoProctorEvents, setExpandedAutoProctorEvents] = useState<AutoProctorEvent[]>([]);
   const [loadingExpanded, setLoadingExpanded] = useState(false);
   const [serverErr, setServerErr] = useState<string | null>(null);
 
@@ -102,14 +105,16 @@ export default function AdminPage() {
       setExpanded(null);
       setExpandedViolations([]);
       setExpandedAnalyses([]);
+      setExpandedAutoProctorEvents([]);
       return;
     }
     setExpanded(id);
     setLoadingExpanded(true);
     try {
-      const { violations, answerAnalyses } = await getSession(id);
+      const { violations, answerAnalyses, autoProctorEvents } = await getSession(id);
       setExpandedViolations(violations);
       setExpandedAnalyses(answerAnalyses);
+      setExpandedAutoProctorEvents(autoProctorEvents ?? []);
       setServerErr(null);
     } catch (error) {
       setServerErr(error instanceof Error ? error.message : "Could not load session details.");
@@ -123,10 +128,11 @@ export default function AdminPage() {
     let active = true;
     const refreshExpandedSession = async () => {
       try {
-        const { violations, answerAnalyses } = await getSession(expanded);
+        const { violations, answerAnalyses, autoProctorEvents } = await getSession(expanded);
         if (!active) return;
         setExpandedViolations(violations);
         setExpandedAnalyses(answerAnalyses);
+        setExpandedAutoProctorEvents(autoProctorEvents ?? []);
       } catch (error) {
         if (active) setServerErr(error instanceof Error ? error.message : "Could not refresh session details.");
       }
@@ -173,7 +179,7 @@ export default function AdminPage() {
           <button id="refresh-btn" className="btn btn-ghost btn-sm" onClick={fetchSessions}>
             ↺ Refresh
           </button>
-          <a href="/" className="btn btn-ghost btn-sm" style={{ textDecoration: "none" }}>← Start</a>
+          <Link href="/" className="btn btn-ghost btn-sm" style={{ textDecoration: "none" }}>← Start</Link>
         </div>
       </header>
 
@@ -199,7 +205,7 @@ export default function AdminPage() {
               </h2>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {activeSessions.map((s) => (
-                  <SessionCard key={s._id} session={s} isExpanded={expanded === s._id} expandedViolations={expanded === s._id ? expandedViolations : []} answerAnalyses={expanded === s._id ? expandedAnalyses : []} loading={loadingExpanded && expanded === s._id} onToggle={() => toggleExpand(s._id)} onRetryAnalysis={(analysisId) => { void retryEstimate(analysisId); }} />
+                  <SessionCard key={s._id} session={s} isExpanded={expanded === s._id} expandedViolations={expanded === s._id ? expandedViolations : []} answerAnalyses={expanded === s._id ? expandedAnalyses : []} autoProctorEvents={expanded === s._id ? expandedAutoProctorEvents : []} loading={loadingExpanded && expanded === s._id} onToggle={() => toggleExpand(s._id)} onRetryAnalysis={(analysisId) => { void retryEstimate(analysisId); }} />
                 ))}
               </div>
             </section>
@@ -213,7 +219,7 @@ export default function AdminPage() {
               </h2>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 {otherSessions.map((s) => (
-                  <SessionCard key={s._id} session={s} isExpanded={expanded === s._id} expandedViolations={expanded === s._id ? expandedViolations : []} answerAnalyses={expanded === s._id ? expandedAnalyses : []} loading={loadingExpanded && expanded === s._id} onToggle={() => toggleExpand(s._id)} onRetryAnalysis={(analysisId) => { void retryEstimate(analysisId); }} />
+                  <SessionCard key={s._id} session={s} isExpanded={expanded === s._id} expandedViolations={expanded === s._id ? expandedViolations : []} answerAnalyses={expanded === s._id ? expandedAnalyses : []} autoProctorEvents={expanded === s._id ? expandedAutoProctorEvents : []} loading={loadingExpanded && expanded === s._id} onToggle={() => toggleExpand(s._id)} onRetryAnalysis={(analysisId) => { void retryEstimate(analysisId); }} />
                 ))}
               </div>
             </section>
@@ -234,7 +240,7 @@ export default function AdminPage() {
             <span className="badge badge-muted" style={{ fontFamily: "var(--font-mono)" }}>{liveViolations.length}</span>
           </div>
           <p style={{ margin: "-8px 0 14px", color: "var(--text-muted)", fontSize: "11px", lineHeight: 1.5 }}>
-            Voice-difference events are review signals only; they do not count toward the violation total.
+            AutoProctor events are review signals only and do not count toward the violation total.
           </p>
 
           {liveViolations.length === 0 ? (
@@ -276,18 +282,18 @@ export default function AdminPage() {
 }
 
 /* ── SessionCard sub-component ─────────────────────────────── */
-function SessionCard({ session, isExpanded, expandedViolations, answerAnalyses, loading, onToggle, onRetryAnalysis }: {
+function SessionCard({ session, isExpanded, expandedViolations, answerAnalyses, autoProctorEvents, loading, onToggle, onRetryAnalysis }: {
   session: Session;
   isExpanded: boolean;
   expandedViolations: Violation[];
   answerAnalyses: AnalysisResult[];
+  autoProctorEvents: AutoProctorEvent[];
   loading: boolean;
   onToggle: () => void;
   onRetryAnalysis: (analysisId: string) => void;
 }) {
   const pct = Math.min(100, (session.violationCount / 5) * 100);
   const statusClass = STATUS_CLASS[session.status];
-  const amber = AMBER_TYPES;
 
   return (
     <div className="glass" style={{ padding: "18px 20px", cursor: "pointer", transition: "all 0.2s ease" }}
@@ -339,10 +345,16 @@ function SessionCard({ session, isExpanded, expandedViolations, answerAnalyses, 
             <div style={{ display: "flex", justifyContent: "center", padding: "24px" }}>
               <div className="spinner" />
             </div>
-          ) : expandedViolations.length === 0 && answerAnalyses.length === 0 ? (
+          ) : expandedViolations.length === 0 && answerAnalyses.length === 0 && autoProctorEvents.length === 0 ? (
             <p style={{ color: "var(--text-muted)", fontSize: "13px", margin: 0, textAlign: "center", padding: "20px" }}>No events recorded.</p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "420px", overflowY: "auto" }}>
+              <ViolationLog
+                violations={expandedViolations}
+                autoProctorSignals={autoProctorEvents}
+                totalCount={session.violationCount}
+                compact
+              />
               {answerAnalyses.map((analysis) => {
                 const processingLabel = analysis.processingStatus === "queued"
                   ? analysis.attempts > 0 ? "RETRY QUEUED" : "QUEUED"
@@ -401,25 +413,6 @@ function SessionCard({ session, isExpanded, expandedViolations, answerAnalyses, 
                   </article>
                 );
               })}
-              {expandedViolations.map((v, i) => (
-                <div key={v._id ?? i} className={`violation-chip ${amber.has(v.type) ? "amber" : ""}`}>
-                  <span style={{ fontSize: "14px", flexShrink: 0 }}>{TYPE_ICONS[v.type] ?? "🚨"}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: "6px" }}>
-                      <span style={{ fontWeight: 600, fontSize: "12px", color: amber.has(v.type) ? "var(--warn)" : "var(--terminate)" }}>
-                        {VIOLATION_LABELS[v.type] ?? v.type}
-                      </span>
-                      {v.type === "other_voice" && (
-                        <span className="badge badge-warn" style={{ fontSize: "9px", padding: "2px 5px" }}>REVIEW ONLY</span>
-                      )}
-                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "var(--text-muted)" }}>
-                        Q{v.question} · {formatTime(v.time)}
-                      </span>
-                    </div>
-                    <p style={{ margin: "2px 0 0", fontSize: "11px", color: "var(--text-muted)" }} className="truncate">{v.reason}</p>
-                  </div>
-                </div>
-              ))}
             </div>
           )}
         </div>

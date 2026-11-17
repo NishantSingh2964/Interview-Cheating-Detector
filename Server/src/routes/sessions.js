@@ -4,43 +4,10 @@ const router = express.Router();
 const Session = require("../models/Session");
 const Violation = require("../models/Violation");
 const AnswerAnalysis = require("../models/AnswerAnalysis");
-const { createVoiceprint } = require("../services/voiceService");
+const AutoProctorEvent = require("../models/AutoProctorEvent");
 const { getAiLikelihoodBand } = require("../services/answerAnalysisService");
 
-const VOICE_SAMPLE_RATE = 16000;
-const VOICE_CLIP_COUNT = 3;
-const MIN_CLIP_SAMPLES = VOICE_SAMPLE_RATE * 3;
-const MAX_CLIP_SAMPLES = VOICE_SAMPLE_RATE * 15;
 const ANSWER_CONSENT_VERSION = "answer-ai-likeness-v2";
-const REKOGNITION_CONSENT_VERSION = "rekognition-proctoring-v1";
-
-router.post("/:id/rekognition-consent", async (req, res) => {
-  try {
-    if (!mongoose.isValidObjectId(req.params.id)) {
-      return res.status(400).json({ message: "A valid session ID is required." });
-    }
-    if (typeof req.body?.consent !== "boolean") {
-      return res.status(400).json({ message: "consent must be a boolean." });
-    }
-
-    const session = await Session.findOne({ _id: req.params.id, status: "active" })
-      .select("+rekognitionFaceConsentAt +rekognitionFaceConsentVersion");
-    if (!session) {
-      const exists = await Session.exists({ _id: req.params.id });
-      return res.status(exists ? 409 : 404).json({
-        message: exists ? "Consent can only be updated for an active interview." : "Interview session not found.",
-      });
-    }
-
-    session.rekognitionFaceConsentAt = req.body.consent ? new Date() : null;
-    session.rekognitionFaceConsentVersion = req.body.consent ? REKOGNITION_CONSENT_VERSION : null;
-    await session.save();
-    res.json({ consent: req.body.consent });
-  } catch (error) {
-    console.error("[sessions] Rekognition consent update failed:", error);
-    res.status(500).json({ message: "Could not save the Amazon Rekognition consent choice." });
-  }
-});
 
 router.post("/:id/preferences", async (req, res) => {
   try {
@@ -133,7 +100,9 @@ router.get("/", async (_req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const session = await Session.findById(req.params.id)
-      .select("+answerReviewConsentAt +answerReviewConsentVersion +rekognitionFaceConsentAt +rekognitionFaceConsentVersion")
+      .select(
+        "+answerReviewConsentAt +answerReviewConsentVersion +autoProctorConsentAt +autoProctorConsentVersion",
+      )
       .lean();
     if (!session) return res.status(404).json({ message: "Session not found" });
 
@@ -153,8 +122,11 @@ router.get("/:id", async (req, res) => {
       nextAttemptAt: analysis.nextAttemptAt ?? null,
       lastError: analysis.lastError ?? null,
     }));
+    const autoProctorEvents = await AutoProctorEvent.find({ sessionId: session._id })
+      .sort({ occurredAt: -1 })
+      .lean();
 
-    res.json({ session, violations, answerAnalyses });
+    res.json({ session, violations, answerAnalyses, autoProctorEvents });
   } catch (err) {
     console.error("[sessions] GET /:id", err);
     res.status(500).json({ message: "Failed to fetch session" });
@@ -162,102 +134,19 @@ router.get("/:id", async (req, res) => {
 });
 
 /**
- * POST /api/sessions/:id/enroll-voice
- * Build a session-only voiceprint from three speech clips; audio is never persisted.
- */
-router.post(
-  "/:id/enroll-voice",
-  express.raw({ type: "application/octet-stream", limit: "4mb" }),
-  async (req, res) => {
-    try {
-      if (req.get("x-voice-consent") !== "session-voiceprint-v1") {
-        return res.status(400).json({ message: "Explicit voice enrollment consent is required." });
-      }
-
-      if (!Buffer.isBuffer(req.body) || req.body.length === 0 || req.body.length % 4 !== 0) {
-        return res.status(400).json({ message: "Voice samples must be Float32 audio data." });
-      }
-
-      const clipLengths = (req.get("x-voice-clip-lengths") || "")
-        .split(",")
-        .map((length) => Number(length));
-      if (
-        clipLengths.length !== VOICE_CLIP_COUNT ||
-        clipLengths.some((length) =>
-          !Number.isInteger(length) || length < MIN_CLIP_SAMPLES || length > MAX_CLIP_SAMPLES
-        ) ||
-        clipLengths.reduce((sum, length) => sum + length, 0) !== req.body.length / 4
-      ) {
-        return res.status(400).json({ message: "Provide three valid speech clips, each 3 to 15 seconds long." });
-      }
-
-      const session = await Session.findById(req.params.id);
-      if (!session) return res.status(404).json({ message: "Session not found." });
-      if (session.status !== "active") {
-        return res.status(409).json({ message: "Voice enrollment requires an active interview session." });
-      }
-      if (session.answerMode !== "speaking") {
-        return res.status(409).json({ message: "Voice enrollment is only available in speaking mode." });
-      }
-
-      let offset = 0;
-      const clips = clipLengths.map((length) => {
-        const samples = new Float32Array(length);
-        for (let index = 0; index < length; index += 1) {
-          const sample = req.body.readFloatLE((offset + index) * 4);
-          if (!Number.isFinite(sample) || Math.abs(sample) > 1) {
-            throw new Error("Voice samples contain invalid audio values.");
-          }
-          samples[index] = sample;
-        }
-        offset += length;
-        return samples;
-      });
-
-      const voiceprint = createVoiceprint(clips);
-      session.set("voiceprint", voiceprint);
-      session.voiceEnrolled = true;
-      session.set("voiceConsentAt", new Date());
-      session.set("voiceConsentVersion", "session-voiceprint-v1");
-      await session.save();
-
-      res.json({ voiceEnrolled: true });
-    } catch (err) {
-      if (err instanceof Error && err.message === "Voice samples contain invalid audio values.") {
-        return res.status(400).json({ message: err.message });
-      }
-      if (err instanceof Error && err.message.includes("Speaker embedding model is missing")) {
-        return res.status(503).json({ message: err.message });
-      }
-      console.error("[sessions] POST /:id/enroll-voice", err);
-      res.status(500).json({ message: "Could not create the voice reference. Please retry enrollment." });
-    }
-  },
-);
-
-/**
  * POST /api/sessions/:id/end
  * Mark an active interview as ended. Repeated requests are safe.
  */
 router.post("/:id/end", async (req, res) => {
   try {
-    const { reason } = req.body ?? {};
-    if (reason !== undefined && reason !== "proctoring_unavailable") {
-      return res.status(400).json({ message: "Unsupported interview end reason." });
-    }
-    const session = await Session.findById(req.params.id)
-      .select("+voiceprint +voiceConsentAt +voiceConsentVersion");
+    const session = await Session.findById(req.params.id);
     if (!session) return res.status(404).json({ message: "Session not found" });
 
     if (session.status === "active") {
       session.status = "ended";
       session.endedAt = new Date();
-      session.endReason = reason ?? "submitted";
+      session.endReason = "submitted";
     }
-    session.voiceEnrolled = false;
-    session.set("voiceprint", undefined);
-    session.set("voiceConsentAt", undefined);
-    session.set("voiceConsentVersion", undefined);
     await session.save();
 
     res.json({ session: session.toObject() });

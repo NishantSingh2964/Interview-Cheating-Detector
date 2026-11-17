@@ -7,12 +7,6 @@ function inactiveSessionUpdate(endedAt) {
       status: "ended",
       endedAt,
       endReason: "heartbeat_timeout",
-      voiceEnrolled: false,
-    },
-    $unset: {
-      voiceprint: "",
-      voiceConsentAt: "",
-      voiceConsentVersion: "",
     },
   };
 }

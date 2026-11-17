@@ -20,7 +20,7 @@ export type ViolationType = (typeof VIOLATION_TYPES)[number];
 export type DecisionAction = "ok" | "warn" | "terminate";
 
 export type SessionStatus = "active" | "terminated" | "ended";
-export type SessionEndReason = "submitted" | "heartbeat_timeout" | "violation_limit" | "proctoring_unavailable";
+export type SessionEndReason = "submitted" | "heartbeat_timeout" | "violation_limit";
 export type CandidateAnswerMode = "writing" | "speaking";
 
 export interface Question {
@@ -39,9 +39,8 @@ export interface Session {
   answerMode?: CandidateAnswerMode | null;
   answerReviewConsentAt?: string | null;
   answerReviewConsentVersion?: string | null;
-  rekognitionFaceConsentAt?: string | null;
-  rekognitionFaceConsentVersion?: string | null;
-  voiceEnrolled: boolean;
+  autoProctorConsentAt?: string | null;
+  autoProctorConsentVersion?: string | null;
   startedAt: string;
   endedAt: string | null;
   lastHeartbeat: string | null;
@@ -55,6 +54,14 @@ export interface Violation {
   reason: string;
   confidence: number;
   time: string;
+}
+
+export interface AutoProctorEvent {
+  _id: string;
+  sessionId: string;
+  evidenceCode: number;
+  label: string;
+  occurredAt: string;
 }
 
 /** Payload the browser sends. The server stores it and decides what happens. */
@@ -87,15 +94,6 @@ export interface AnalysisResult {
   nextAttemptAt: string | null;
   lastError: string | null;
   analyzedAt: string;
-}
-
-export interface DetectionBox {
-  label: string;
-  score: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 }
 
 export interface ReportedEvent extends ViolationReport {

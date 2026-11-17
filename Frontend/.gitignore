@@ -42,6 +42,3 @@ next-env.d.ts
 
 # Copied by scripts/setup-assets.mjs
 /public/ort
-/public/mediapipe
-/public/models/*.task
-/public/models/*.onnx

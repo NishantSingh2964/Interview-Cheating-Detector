@@ -1,5 +1,6 @@
 import { SERVER_URL } from "@/lib/config";
-import type { AnalysisResult, CandidateAnswerMode, DetectionBox, Question, Session, Violation } from "@/lib/types";
+import { AUTOPROCTOR_CONSENT_VERSION, type AutoProctorCredentials } from "@/lib/autoProctor";
+import type { AnalysisResult, AutoProctorEvent, CandidateAnswerMode, Question, Session, Violation } from "@/lib/types";
 
 export class ApiError extends Error {
   status?: number;
@@ -51,10 +52,9 @@ export function getSession(id: string) {
   return request<SessionDetails>(`/api/sessions/${id}`);
 }
 
-export function endSession(id: string, reason?: "proctoring_unavailable") {
+export function endSession(id: string) {
   return request<{ session: Session }>(`/api/sessions/${id}/end`, {
     method: "POST",
-    ...(reason ? { body: JSON.stringify({ reason }) } : {}),
   });
 }
 
@@ -68,80 +68,21 @@ export function saveInterviewPreferences(id: string, input: {
   });
 }
 
-export function getRekognitionStatus() {
-  return request<{ enabled: boolean }>("/api/analysis/rekognition/status");
-}
-
-export function saveRekognitionConsent(id: string, consent: boolean) {
-  return request<{ consent: boolean }>(`/api/sessions/${encodeURIComponent(id)}/rekognition-consent`, {
+export function getAutoProctorCredentials(id: string) {
+  return request<AutoProctorCredentials>(`/api/autoproctor/sessions/${encodeURIComponent(id)}/credentials`, {
     method: "POST",
-    body: JSON.stringify({ consent }),
+    body: JSON.stringify({
+      consent: true,
+      consentVersion: AUTOPROCTOR_CONSENT_VERSION,
+    }),
   });
 }
 
-export function verifyRekognitionReady(id: string) {
-  return request<{ ready: boolean }>("/api/analysis/rekognition/ready", {
+export function reportAutoProctorEvent(id: string, evidenceCode: number) {
+  return request<{ event: AutoProctorEvent }>(`/api/autoproctor/sessions/${encodeURIComponent(id)}/events`, {
     method: "POST",
-    headers: { "X-Rekognition-Consent": "rekognition-proctoring-v1" },
-    body: JSON.stringify({ sessionId: id }),
+    body: JSON.stringify({ evidenceCode }),
   });
-}
-
-export async function analyzeRekognitionFrame(id: string, frame: Blob) {
-  let response: Response;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
-  try {
-    response = await fetch(
-      `${SERVER_URL}/api/analysis/rekognition/${encodeURIComponent(id)}/frame`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "image/jpeg",
-          "X-Rekognition-Consent": "rekognition-proctoring-v1",
-        },
-        body: frame,
-        signal: controller.signal,
-      },
-    );
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new ApiError("Amazon Rekognition request timed out.");
-    }
-    throw new ApiError("The interview server is not reachable.");
-  } finally {
-    clearTimeout(timeout);
-  }
-  if (!response.ok) throw new ApiError(await readError(response), response.status);
-  return (await response.json()) as { faceCount: number; objects: DetectionBox[] };
-}
-
-export async function enrollVoice(id: string, clips: Float32Array[]) {
-  const clipLengths = clips.map((clip) => clip.length);
-  const totalSamples = clipLengths.reduce((sum, length) => sum + length, 0);
-  const combined = new Float32Array(totalSamples);
-  let offset = 0;
-  for (const clip of clips) {
-    combined.set(clip, offset);
-    offset += clip.length;
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(`${SERVER_URL}/api/sessions/${id}/enroll-voice`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/octet-stream",
-        "X-Voice-Consent": "session-voiceprint-v1",
-        "X-Voice-Clip-Lengths": clipLengths.join(","),
-      },
-      body: combined.buffer,
-    });
-  } catch {
-    throw new ApiError("The interview server is not reachable.");
-  }
-  if (!response.ok) throw new ApiError(await readError(response), response.status);
-  return (await response.json()) as { voiceEnrolled: boolean };
 }
 
 export async function getQuestions() {
@@ -209,4 +150,5 @@ export interface SessionDetails {
   session: Session;
   violations: Violation[];
   answerAnalyses: AnalysisResult[];
+  autoProctorEvents: AutoProctorEvent[];
 }
