@@ -17,6 +17,8 @@ Keep both values server-side and out of source control. The current integration 
 
 Configure the backend project with `Server` as its Root Directory. Add `AUTOPROCTOR_CLIENT_ID` and `AUTOPROCTOR_CLIENT_SECRET` to the backend's Production environment and redeploy after changing them. Do not add these secrets to the frontend project.
 
+For production, set `CLIENT_URLS` to a comma-separated list of exact frontend origins, or `CLIENT_URL` for a single origin. To allow this project's Vercel branch previews, set `VERCEL_PREVIEW_PROJECT` and `VERCEL_PREVIEW_TEAM` to the Vercel project and team slugs. The server allows only HTTPS preview hosts matching that project and team; keep any additional origins in `CLIENT_URLS`.
+
 ## Spoken and typed answer review
 
 At the start of an interview, candidates choose writing or speaking mode and are asked once whether to consent to answer processing. Writing-mode candidates may decline and continue, but answers are not saved for AI review in that case. Speaking mode requires consent because recordings are sent to the configured Whisper service for transcription. With consent, the answer or transcript is sent to the configured provider for an experimental estimate and saved for the interviewer for up to 7 days; raw answer audio is not retained. Copying from and pasting into the interview page are blocked and recorded as review signals. Paste-event metadata and answer entry method are not sent to the model provider and do not identify the text's source.

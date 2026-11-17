@@ -8,6 +8,11 @@ const { Server: SocketServer } = require("socket.io");
 const connectDB = require("./config/db");
 const registerProctorSocket = require("./sockets/proctor");
 const { startAnswerReviewWorker } = require("./services/answerReviewQueue");
+const {
+  createClientOriginCallback,
+  getAllowedClientOrigins,
+  getVercelPreviewHostPattern,
+} = require("./config/clientOrigins");
 
 const sessionsRouter = require("./routes/sessions");
 const questionsRouter = require("./routes/questions");
@@ -15,7 +20,12 @@ const analysisRouter = require("./routes/analysis");
 const { router: autoProctorRouter } = require("./routes/autoProctor");
 
 const PORT = process.env.PORT || 4000;
-const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
+const allowedClientOrigins = getAllowedClientOrigins();
+const previewHostPattern = getVercelPreviewHostPattern();
+const validateClientOrigin = createClientOriginCallback(
+  allowedClientOrigins,
+  previewHostPattern,
+);
 
 async function main() {
   // ── Database ────────────────────────────────────────────────
@@ -24,7 +34,7 @@ async function main() {
 
   // ── Express ─────────────────────────────────────────────────
   const app = express();
-  app.use(cors({ origin: CLIENT_URL, credentials: true }));
+  app.use(cors({ origin: validateClientOrigin, credentials: true }));
   app.use(express.json());
 
   // Health check
@@ -44,7 +54,7 @@ async function main() {
   const io = new SocketServer(server, {
     maxHttpBufferSize: 1_100_000,
     cors: {
-      origin: CLIENT_URL,
+      origin: validateClientOrigin,
       methods: ["GET", "POST"],
       credentials: true,
     },
@@ -57,7 +67,10 @@ async function main() {
     console.log(`\n  ✦ Interview Proctor Server`);
     console.log(`    REST  → http://localhost:${PORT}`);
     console.log(`    WS    → http://localhost:${PORT} (Socket.IO)`);
-    console.log(`    CORS  → ${CLIENT_URL}\n`);
+    const previewLabel = previewHostPattern
+      ? `, Vercel preview host pattern: ${previewHostPattern}`
+      : "";
+    console.log(`    CORS  → ${[...allowedClientOrigins].join(", ")}${previewLabel}\n`);
   });
 }
 
