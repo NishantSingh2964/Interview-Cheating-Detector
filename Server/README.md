@@ -1,24 +1,21 @@
 # Server
 
-## Voice enrollment model
+## AutoProctor integration
 
-Voice enrollment needs the English CAM++ speaker-embedding model in `Server/models/`. From this directory, run:
+The candidate must explicitly consent before the frontend loads the AutoProctor SDK. The server issues the AutoProctor client ID, the interview session ID as `testAttemptId`, and a Base64 HMAC-SHA256 signature. `AUTOPROCTOR_CLIENT_SECRET` is never returned to the browser. The SDK starts before interview questions become available and is stopped when the interview ends.
 
-```powershell
-npm install
-npm run setup-voice-model
-npm run dev
+Configure these values in `Server/.env` and in the backend deployment's environment:
+
+```env
+AUTOPROCTOR_CLIENT_ID=your_autoproctor_client_id
+AUTOPROCTOR_CLIENT_SECRET=your_autoproctor_client_secret
 ```
 
-The model is downloaded separately and ignored by Git; the server returns `503` from enrollment if it is missing.
+Keep both values server-side and out of source control. The current integration enables AutoProctor's face-count, audio, tab-switch, and multiple-screen checks. To match the working sample, forced fullscreen, random photos, auxiliary-device monitoring, full-session recording, and the SDK's copy/paste blocker are disabled. The website itself blocks and logs right-click and copy/paste attempts. After monitoring stops, the candidate page asks the SDK to render its report; evidence images, audio, and URLs remain with AutoProctor and its developer dashboard. Events stored by this application contain only event codes, labels, and server timestamps. Treat these events as review signals, not proof of misconduct.
 
 ### Deploying the backend to Vercel
 
-Configure the Vercel backend project with `Server` as its Root Directory and leave dependency installation enabled. Its default Build Command (`npm run build`) runs `npm run setup-voice-model`, downloading the model into `Server/models/` during each deployment build. The model stays out of Git. Do not override the Build Command with `npm install` or `npm run start`; either would skip model setup or start the server during the build.
-
-After deployment, check the build log for `Downloaded English CAM++ speaker embedding model` (or `Speaker embedding model already exists`). Then test voice enrollment against the deployed backend. The model must be present in the deployed function at runtime, and `sherpa-onnx-node`'s native binaries must be compatible with Vercel's Node.js runtime. If the build succeeds but enrollment still reports the model missing, verify Vercel included `models/wespeaker_en_voxceleb_CAM++_LM.onnx` in the function bundle; a build-time download alone does not guarantee runtime file tracing.
-
-Enrollment requires explicit candidate consent. The server processes the submitted clips in memory and stores only a session voiceprint; ending the interview clears the voiceprint and consent metadata. Raw audio clips are not persisted.
+Configure the backend project with `Server` as its Root Directory. Add `AUTOPROCTOR_CLIENT_ID` and `AUTOPROCTOR_CLIENT_SECRET` to the backend's Production environment and redeploy after changing them. Do not add these secrets to the frontend project.
 
 ## Spoken and typed answer review
 
@@ -72,28 +69,6 @@ The Whisper function rejects transcription requests if its Vercel `WHISPER_API_K
 
 Answer text and scores expire after 7 days. The admin view may show "Paste event observed" when the browser reports a paste event. This is browser metadata only: it does not identify the text source or establish who wrote it, and it is not sent to the model. The AI-likeness estimate is not a reliable authorship detector; use it only in controlled testing against known-source answers and track false positives as well as misses. The score should not be treated as proof or an automatic penalty. The admin dashboard currently has no authentication; do not expose this project publicly with real candidate data until access controls are in place.
 
-## Live speaker comparison
-
-Speaking mode starts the existing voice enrollment flow. Candidates give separate, explicit consent before creating a session-only voice reference; they can skip enrollment and still use speaking mode for answer transcription. Live speaker comparison runs only for an enrolled speaking-mode session. The voice enrollment model and threshold requirements below still apply.
-
-The browser sends VAD speech segments (3–15 seconds) only for enrolled sessions. The server computes each embedding and compares it with the session voiceprint. When at least two of the last three scores are below the configured similarity threshold, it records an `other_voice` review signal and applies a 10-second cooldown. Audio is processed in memory and not persisted; the short comparison window is also kept only in server memory.
-
-Live comparison is **off by default**. Do not set `VOICE_OTHER_THRESHOLD` until you have calibrated a threshold against consented recordings for the chosen model, microphones, and expected room conditions. Set it in the server environment to a cosine similarity from `-1` to `1`; lower scores than that value are treated as a mismatch. The current code intentionally does not choose a default threshold. The camera panel reports when comparison is unavailable.
-
-`other_voice` is stored and shown in the candidate/admin event logs as an amber review signal. It does not increment the disciplinary violation count or trigger warnings/termination. It is not proof of identity and should be reviewed by a person. Speaker comparison without diarization can miss overlapping speakers and may flag legitimate voice or acoustic changes. Validate it with real, consented recordings before relying on it.
-
 ## Inactive session cleanup
 
-Sessions with no recorded heartbeat for 60 seconds are marked `ended` with reason `heartbeat_timeout`; this is not counted as a proctoring violation. The server checks on startup, periodically, and when a connected session's inactivity timer expires. Session-only voiceprint and consent metadata are cleared at the same time. Newly created sessions are not treated as abandoned until their first candidate socket connects and records a heartbeat.
-
-## Calibrating with local recordings
-
-The calibration command runs entirely on the local server machine; it does not upload, save, or modify audio. Use WAV clips from consenting speakers and split one candidate's recordings into separate reference and held-out candidate sets. Include several other consenting speakers in the held-out `other` set, with varied but realistic microphones and room conditions. Do not reuse reference clips as test clips.
-
-Supported input is mono or stereo PCM16/Float32 WAV, 3–15 seconds per file; other sample rates are resampled locally to 16 kHz. From `Server`, run:
-
-```powershell
-npm run calibrate-voice -- --reference .\voice-tests\reference --candidate .\voice-tests\candidate --other .\voice-tests\other
-```
-
-The command reports per-clip cosine scores and the false-alarm/miss tradeoff at each observed threshold. Review the results with a sufficiently varied dataset and select a threshold deliberately; the command never picks or persists one. Only then set `VOICE_OTHER_THRESHOLD` in the server environment and repeat testing with recordings not used to select it.
+Sessions with no recorded heartbeat for 60 seconds are marked `ended` with reason `heartbeat_timeout`; this is not counted as a proctoring violation. The server checks on startup, periodically, and when a connected session's inactivity timer expires. Newly created sessions are not treated as abandoned until their first candidate socket connects and records a heartbeat.

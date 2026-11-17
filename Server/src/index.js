@@ -12,6 +12,7 @@ const { startAnswerReviewWorker } = require("./services/answerReviewQueue");
 const sessionsRouter = require("./routes/sessions");
 const questionsRouter = require("./routes/questions");
 const analysisRouter = require("./routes/analysis");
+const { router: autoProctorRouter } = require("./routes/autoProctor");
 
 const PORT = process.env.PORT || 4000;
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:3000";
@@ -35,6 +36,7 @@ async function main() {
   app.use("/api/sessions", sessionsRouter);
   app.use("/api/questions", questionsRouter);
   app.use("/api/analysis", analysisRouter);
+  app.use("/api/autoproctor", autoProctorRouter);
 
   // ── HTTP + Socket.IO ────────────────────────────────────────
   const server = http.createServer(app);

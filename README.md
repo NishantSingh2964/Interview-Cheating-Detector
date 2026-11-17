@@ -15,21 +15,13 @@ The application uses Next.js for the frontend, Node.js for backend services, and
 
 ## Key Features
 
-### 1. Tab Switching & Window Minimize Detection
-- Detects when candidates switch browser tabs.
-- Identifies when the assessment window loses focus or is minimized.
-- Uses built-in browser APIs to monitor candidate activity.
+### 1. Third-Party Proctoring
+- AutoProctor monitors face count, sound, tab switching, and multiple screens after explicit candidate consent. In the current configuration, forced fullscreen and random photos are disabled; the website blocks and logs right-click and copy/paste attempts.
+- The server signs each interview attempt with HMAC-SHA256; the client secret never leaves the backend.
+- AutoProctor SDK events are shown as review signals and do not automatically increase violation counts.
+- Full-session recording and optional paid add-ons are not enabled.
 
-### 2. Visual Cheating Detection
-- MediaPipe and YOLO runtime detection have been removed.
-- AutoProctor integration is planned; visual cheating detection is currently unavailable.
-
-### 3. Audio & Sound Detection
-- Uses the Web Audio API and WavLM library.
-- Monitors audio input for potentially suspicious sounds.
-- Includes sound detection testing and refinement.
-
-### 4. AI-Based Response Analysis
+### 2. AI-Based Response Analysis
 - Integrates OpenRouter for AI-based candidate response analysis.
 - Estimates whether candidate responses may be AI-generated or agent-assisted.
 - Flags responses when the estimated AI/agent-generated score is **60% or higher**.
@@ -61,9 +53,7 @@ The admin portal provides a centralized interface for monitoring candidates and 
 | Next.js | Frontend development |
 | Node.js | Backend development |
 | Socket.IO | Real-time communication |
-| ONNX Runtime | Speech activity detection |
-| Web Audio API | Audio monitoring |
-| WavLM | Audio analysis |
+| ONNX Runtime | Speech activity detection for spoken answers |
 | OpenRouter | AI-based response analysis |
 
 ## System Architecture
@@ -71,14 +61,13 @@ The admin portal provides a centralized interface for monitoring candidates and 
 ```text
               Candidate Portal
                      |
-          Browser & Camera Monitoring
+          AutoProctor SDK Monitoring
                      |
-        --------------------------------
-        |       |       |       |      |
-       Tab    Face    Object  Audio   Response
-     Detection Detection Detection Analysis Analysis
-        |       |       |       |      |
-        --------------------------------
+        -----------------------------------
+        |              |                  |
+       Face         Sound           Tab switching
+      checks        checks             checks
+        -----------------------------------
                      |
                 Node.js Backend
                      |
@@ -100,15 +89,16 @@ The admin portal provides a centralized interface for monitoring candidates and 
 | Candidate Portal | Next.js | Implemented |
 | Admin Portal | Next.js | Implemented |
 | Real-time Monitoring | Socket.IO | Implemented |
-| Tab Switching Detection | Browser APIs | Implemented |
-| Visual Cheating Detection | AutoProctor | Planned |
-| Audio Detection | Web Audio API + WavLM | Implemented and refined |
+| Face/audio/tab monitoring | AutoProctor SDK | Implemented |
+| AutoProctor event timeline | Server + admin dashboard | Implemented (review only) |
 | AI Response Analysis | OpenRouter | Implemented |
 | AI-generated Response Flagging | 60% threshold | Implemented |
 
 ## Important Note
 
 AI-generated response scores are estimates intended to assist administrators in identifying potentially suspicious behavior. They should not be treated as definitive proof of cheating. Final assessment decisions should involve human review and additional context.
+
+AutoProctor processes candidate camera and microphone input and may collect evidence such as tab-switch screenshots. Candidates are shown a separate consent notice before the SDK starts. Review its privacy terms and data-retention controls before using real candidate data. AutoProctor events shown in this application are client-reported review signals, not proof of misconduct.
 
 ## Project Goal
 

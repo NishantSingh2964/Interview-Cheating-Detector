@@ -39,7 +39,8 @@ export interface Session {
   answerMode?: CandidateAnswerMode | null;
   answerReviewConsentAt?: string | null;
   answerReviewConsentVersion?: string | null;
-  voiceEnrolled: boolean;
+  autoProctorConsentAt?: string | null;
+  autoProctorConsentVersion?: string | null;
   startedAt: string;
   endedAt: string | null;
   lastHeartbeat: string | null;
@@ -53,6 +54,14 @@ export interface Violation {
   reason: string;
   confidence: number;
   time: string;
+}
+
+export interface AutoProctorEvent {
+  _id: string;
+  sessionId: string;
+  evidenceCode: number;
+  label: string;
+  occurredAt: string;
 }
 
 /** Payload the browser sends. The server stores it and decides what happens. */

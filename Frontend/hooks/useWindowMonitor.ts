@@ -1,36 +1,33 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { DETECT } from "@/lib/config";
-import { createSignalGate } from "@/lib/signalGate";
-import type { ViolationReport } from "@/lib/types";
+import { useEffect, useLayoutEffect, useRef } from "react";
+import type { ViolationReport, ViolationType } from "@/lib/types";
 
-type Emit = (event: Pick<ViolationReport, "type" | "reason" | "confidence">) => void;
+type BrowserViolation = Pick<ViolationReport, "type" | "reason" | "confidence">;
+type Emit = (event: BrowserViolation) => void;
 
-export function useWindowMonitor(enabled: boolean, onViolation: Emit) {
+const EVENT_COOLDOWN_MS = 1500;
+
+export function useWindowMonitor(armed: boolean, active: boolean, onViolation: Emit) {
+  const activeRef = useRef(active);
   const onViolationRef = useRef(onViolation);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    activeRef.current = active;
     onViolationRef.current = onViolation;
-  }, [onViolation]);
+  }, [active, onViolation]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!armed) return;
 
-    const gates = {
-      window: createSignalGate(0, DETECT.cooldownMs),
-      fullscreen: createSignalGate(0, DETECT.cooldownMs),
-      contextmenu: createSignalGate(0, DETECT.cooldownMs),
-      copy: createSignalGate(0, DETECT.cooldownMs),
-      paste: createSignalGate(0, DETECT.cooldownMs),
-    };
+    const lastReportedAt = new Map<ViolationType, number>();
     let sawFullscreen = Boolean(document.fullscreenElement);
 
-    const emit = (
-      type: keyof typeof gates,
-      reason: string,
-    ) => {
-      if (!gates[type].update(true, Date.now())) return;
+    const emit = (type: ViolationType, reason: string) => {
+      if (!activeRef.current) return;
+      const now = Date.now();
+      if (now - (lastReportedAt.get(type) ?? 0) < EVENT_COOLDOWN_MS) return;
+      lastReportedAt.set(type, now);
       onViolationRef.current({ type, reason, confidence: 1 });
     };
 
@@ -43,37 +40,44 @@ export function useWindowMonitor(enabled: boolean, onViolation: Emit) {
     const onFullscreen = () => {
       if (document.fullscreenElement) {
         sawFullscreen = true;
-        return;
+      } else if (sawFullscreen) {
+        emit("fullscreen", "Exited fullscreen");
       }
-      if (sawFullscreen) emit("fullscreen", "Exited fullscreen");
     };
-    const onContext = (event: MouseEvent) => {
+    const onContextMenu = (event: MouseEvent) => {
+      if (!activeRef.current) return;
       event.preventDefault();
       emit("contextmenu", "Right-click blocked");
     };
-    const onCopy = (event: ClipboardEvent) => {
+    const onClipboard = (event: ClipboardEvent) => {
+      if (!activeRef.current) return;
       event.preventDefault();
-      emit("copy", "Copying from the interview page was blocked");
+      emit(event.type === "copy" ? "copy" : "paste", `${event.type === "copy" ? "Copy" : "Paste"} blocked`);
     };
-    const onPaste = (event: ClipboardEvent) => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!activeRef.current || !(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key !== "c" && key !== "v" && key !== "x") return;
       event.preventDefault();
-      emit("paste", "Pasting into the interview page was blocked");
+      emit(key === "v" ? "paste" : "copy", `${key === "v" ? "Paste" : "Copy"} shortcut blocked`);
     };
 
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("blur", onBlur);
     document.addEventListener("fullscreenchange", onFullscreen);
-    document.addEventListener("contextmenu", onContext);
-    document.addEventListener("copy", onCopy);
-    document.addEventListener("paste", onPaste);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("contextmenu", onContextMenu, true);
+    window.addEventListener("copy", onClipboard, true);
+    window.addEventListener("paste", onClipboard, true);
+    window.addEventListener("keydown", onKeyDown, true);
 
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("blur", onBlur);
       document.removeEventListener("fullscreenchange", onFullscreen);
-      document.removeEventListener("contextmenu", onContext);
-      document.removeEventListener("copy", onCopy);
-      document.removeEventListener("paste", onPaste);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("contextmenu", onContextMenu, true);
+      window.removeEventListener("copy", onClipboard, true);
+      window.removeEventListener("paste", onClipboard, true);
+      window.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [enabled]);
+  }, [armed]);
 }

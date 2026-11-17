@@ -1,5 +1,6 @@
 import { SERVER_URL } from "@/lib/config";
-import type { AnalysisResult, CandidateAnswerMode, Question, Session, Violation } from "@/lib/types";
+import { AUTOPROCTOR_CONSENT_VERSION, type AutoProctorCredentials } from "@/lib/autoProctor";
+import type { AnalysisResult, AutoProctorEvent, CandidateAnswerMode, Question, Session, Violation } from "@/lib/types";
 
 export class ApiError extends Error {
   status?: number;
@@ -67,32 +68,21 @@ export function saveInterviewPreferences(id: string, input: {
   });
 }
 
-export async function enrollVoice(id: string, clips: Float32Array[]) {
-  const clipLengths = clips.map((clip) => clip.length);
-  const totalSamples = clipLengths.reduce((sum, length) => sum + length, 0);
-  const combined = new Float32Array(totalSamples);
-  let offset = 0;
-  for (const clip of clips) {
-    combined.set(clip, offset);
-    offset += clip.length;
-  }
+export function getAutoProctorCredentials(id: string) {
+  return request<AutoProctorCredentials>(`/api/autoproctor/sessions/${encodeURIComponent(id)}/credentials`, {
+    method: "POST",
+    body: JSON.stringify({
+      consent: true,
+      consentVersion: AUTOPROCTOR_CONSENT_VERSION,
+    }),
+  });
+}
 
-  let response: Response;
-  try {
-    response = await fetch(`${SERVER_URL}/api/sessions/${id}/enroll-voice`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/octet-stream",
-        "X-Voice-Consent": "session-voiceprint-v1",
-        "X-Voice-Clip-Lengths": clipLengths.join(","),
-      },
-      body: combined.buffer,
-    });
-  } catch {
-    throw new ApiError("The interview server is not reachable.");
-  }
-  if (!response.ok) throw new ApiError(await readError(response), response.status);
-  return (await response.json()) as { voiceEnrolled: boolean };
+export function reportAutoProctorEvent(id: string, evidenceCode: number) {
+  return request<{ event: AutoProctorEvent }>(`/api/autoproctor/sessions/${encodeURIComponent(id)}/events`, {
+    method: "POST",
+    body: JSON.stringify({ evidenceCode }),
+  });
 }
 
 export async function getQuestions() {
@@ -160,4 +150,5 @@ export interface SessionDetails {
   session: Session;
   violations: Violation[];
   answerAnalyses: AnalysisResult[];
+  autoProctorEvents: AutoProctorEvent[];
 }

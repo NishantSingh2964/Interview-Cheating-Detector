@@ -22,12 +22,6 @@ test("ends only an active session whose last heartbeat is beyond the grace perio
       lastHeartbeat: { $lte: new Date(endedAt.getTime() - SESSION_IDLE_END_MS) },
     });
     assert.equal(captured[1].$set.endReason, "heartbeat_timeout");
-    assert.equal(captured[1].$set.voiceEnrolled, false);
-    assert.deepEqual(captured[1].$unset, {
-      voiceprint: "",
-      voiceConsentAt: "",
-      voiceConsentVersion: "",
-    });
     assert.deepEqual(captured[2], { new: true });
   } finally {
     Session.findOneAndUpdate = original;

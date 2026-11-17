@@ -8,14 +8,11 @@ interface Props {
   videoRef: RefObject<HTMLVideoElement | null>;
   stream: MediaStream | null;
   voiceActivityStatus: VoiceActivityStatus;
-  voiceEnrolled: boolean;
-  voiceComparisonEnabled: boolean | null;
   speaking: boolean;
-  soundLevel: number;       // 0–1 RMS
   mirrored?: boolean;
 }
 
-export function CameraView({ videoRef, stream, voiceActivityStatus, voiceEnrolled, voiceComparisonEnabled, speaking, soundLevel, mirrored = true }: Props) {
+export function CameraView({ videoRef, stream, voiceActivityStatus, speaking, mirrored = true }: Props) {
   /* Attach stream to video */
   useEffect(() => {
     const v = videoRef.current;
@@ -27,8 +24,6 @@ export function CameraView({ videoRef, stream, voiceActivityStatus, voiceEnrolle
       v.srcObject = null;
     }
   }, [stream, videoRef]);
-
-  const soundPct = Math.min(100, soundLevel * 600); // amplify for display
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -70,32 +65,6 @@ export function CameraView({ videoRef, stream, voiceActivityStatus, voiceEnrolle
         {voiceActivityStatus === "unavailable" && "Speech detection unavailable"}
       </p>
 
-      {voiceEnrolled && (
-        <p aria-live="polite" style={{ margin: 0, fontSize: "11px", color: voiceComparisonEnabled === false ? "var(--warn)" : "var(--text-muted)" }}>
-          {voiceComparisonEnabled === null && "Checking speaker comparison…"}
-          {voiceComparisonEnabled === true && "Speaker comparison active (review signal only)"}
-          {voiceComparisonEnabled === false && "Speaker comparison unavailable — server needs configuration"}
-        </p>
-      )}
-
-      {/* Sound level meter */}
-      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ color: "var(--text-muted)", flexShrink: 0 }}>
-          <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-        <div style={{ flex: 1, height: "6px", background: "var(--bg-elevated)", borderRadius: "99px", overflow: "hidden" }}>
-          <div
-            className="sound-bar"
-            style={{
-              width: `${soundPct}%`,
-              background: soundPct > 60 ? "var(--terminate)" : soundPct > 30 ? "var(--warn)" : "var(--ok)",
-            }}
-          />
-        </div>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: "11px", color: "var(--text-muted)", minWidth: "28px", textAlign: "right" }}>
-          {Math.round(soundLevel * 100)}
-        </span>
-      </div>
     </div>
   );
 }

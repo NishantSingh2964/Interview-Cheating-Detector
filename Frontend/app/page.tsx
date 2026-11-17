@@ -24,7 +24,6 @@ export default function StartPage() {
         setError(
           err instanceof Error ? err.message : "Could not connect to the server."
         );
-      } finally {
         setLoading(false);
       }
     },
@@ -68,9 +67,9 @@ export default function StartPage() {
           {/* Info strip */}
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "28px" }}>
             {[
-              { icon: "👁", label: "Face monitor" },
-              { icon: "🔊", label: "Sound monitor" },
-              { icon: "🖥", label: "Tab monitor" },
+              { icon: "👁", label: "AutoProctor face checks" },
+              { icon: "🔊", label: "AutoProctor audio checks" },
+              { icon: "🖥", label: "AutoProctor tab checks" },
             ].map((f) => (
               <span key={f.label} className="badge badge-accent" style={{ fontSize: "11px" }}>
                 {f.icon} {f.label}
@@ -130,8 +129,8 @@ export default function StartPage() {
           <div className="divider" style={{ margin: "24px 0" }} />
 
           <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "12px", margin: 0, lineHeight: 1.6 }}>
-            Your camera and microphone will be used for proctoring only.
-            No video is recorded. Spoken-answer recording is optional and requires separate consent.
+            AutoProctor is a third-party proctoring service and may collect photos and tab-switch evidence.
+            Full-session recording is disabled. Spoken-answer recording requires separate consent.
           </p>
         </div>
 
